@@ -125,11 +125,51 @@ builtin registry exists yet — see Phase 3 notes below). 17 tests in
 
 ## Phases 5–13
 
-Fill in from prior planning notes (optimizer/`PURE_FUNCTIONS`, the
-backtest engine and `crosses_above`/`crosses_below`, walk-forward +
-multiple-comparisons stats tooling, benchmarking, paper writeup, etc.) —
-not reconstructed here since these phases weren't pasted into this
-session. Known follow-ups from building Phase 4: `examples/hello_world.ql`
-still doesn't run end to end (`load_csv`/`sma` naming mismatches with the
+Fill in from prior planning notes (the backtest engine and
+`crosses_above`/`crosses_below`, walk-forward + multiple-comparisons
+stats tooling, benchmarking, paper writeup, etc.) — not reconstructed
+here since these phases weren't pasted into this session. Known
+follow-ups from building Phase 4: `examples/hello_world.ql` still
+doesn't run end to end (`load_csv`/`sma` naming mismatches with the
 registry's `load`/`SMA`, and `buy`/`sell`/strategy execution wait on
 Phase 7) — not worth chasing further until those land.
+
+## Phase 5 — IR & optimizer (done)
+
+**Scope note, flagged before building**: Phase 0 decided "tree-walking
+interpreter stays what actually runs; `ir`/`optimizer`/`codegen` are
+aspirational placeholders" (`docs/spec.md`). Phase 5 explicitly asked
+for a real second execution path with a cross-validation suite against
+the tree-walker, so that's what got built — `allie run` still executes
+via the tree-walking interpreter; the IR path exists for the optimizer
+to operate on and be demonstrated against.
+
+### 5.1 IR instruction set
+
+- [x] `allie/ir/instructions.py`: every op from the spec (`LoadConst`/`LoadVar`/`StoreVar`/`LoadSeries`/`BinOp`/`UnaryOp`/`Call`/`MemberGet`/`Label`/`Jump`/`JumpIfFalse`/`Return`), plus one addition: `Move(dest, src)`. Confirmed, not assumed: `for`/`break`/`continue`/`strategy`/`when`/`backtest` need no new instruction — but short-circuit `and`/`or` genuinely does, since the given set has no `JumpIfTrue` and no copy/phi to converge two conditional branches into one result register. `LoadSeries` is defined but unused — array literals lower through `Call("__make_series", ...)` instead (the spec's own 5.2 decision).
+- [x] `IRProgram`: flat `list[IRInstr]`, no basic-block/CFG structure, exactly as specced. `RegisterAllocator.new_reg()`/`new_label()` just increment counters.
+
+### 5.2 AST → IR lowering
+
+- [x] `allie/ir/lowering.py`. Two decisions the spec left open, made and documented: **separate `IRProgram` per function** (avoids call-stack/return-address machinery a flat-list-with-labels design would need); **functions are static, name-registered, not first-class closures** — `factorial`/`fib` calling themselves by name works identically to the tree-walker, but a function *returned from* another function and called later (real lexical closure capture) has no way to work when calls dispatch by static name. This is a real, bounded limitation, not an oversight — the Phase 5.3 cross-validation suite is scoped around it (see below).
+- [x] `ForStmt` desugars to the identical `while`-shaped Label/Jump/JumpIfFalse pattern, exactly as asked — with one detail the spec didn't spell out and getting wrong would have silently broken `for`: `continue`'s target is a dedicated `increment_label`, *not* the same label `while`'s `continue` uses, because a `for` loop's `continue` must still run the increment before rechecking the condition.
+- [x] `break`/`continue` via a `(continue_label, break_label)` stack, pushed/popped around loop lowering.
+- [x] `strategy`/`when`/`backtest` lower to `Call`s into the not-yet-built Phase 7 backtest engine, invoked not inlined.
+- [x] 24 tests in `tests/unit/test_ir_lowering.py`.
+
+### 5.3 IR interpreter
+
+- [x] `allie/ir/interpreter.py`: flat instruction-pointer loop, a register dict plus the existing `Environment` for named variables (scoping deliberately flat — no per-block child scope, safe for every program this phase's suite covers). Operator/field-access logic is independently re-implemented, not imported from the tree-walker, so a bug shared by both wouldn't hide from cross-validation.
+- [x] **Cross-validation suite** (`tests/unit/test_ir_cross_validation.py`, 15 tests): every Phase 1 for/break/continue/recursion program plus the Phase 4 quant integration programs (`load`/`SMA`/`mean`, `for`-loop-over-window-sizes), run through both interpreters, asserting identical results — including a `SeriesValue`-aware comparison. Deliberately does **not** include the two closure-capture programs, per 5.2's documented limitation.
+- [x] Found and fixed a real mypy gap while wiring this up: reassigning `promote_numeric`'s result to the same `Value`-annotated parameter (instead of a fresh local) keeps mypy checking the full `Value` union against `+`/`-`/`*`/`/` — same root cause the tree-walker's binop helper already had, silently masked by a stale `warn_return_any` override comment that no longer matched why it was needed. Fixed both, and updated the override's justification to the real reason.
+
+### 5.4 Optimizer passes
+
+- [x] `allie/optimizer/pure_functions.py`: `PURE_FUNCTIONS`, written once, imported by both `dce.py` and `cse.py` — a hand-picked allowlist (not "everything except a denylist"), so a new builtin defaults to *not* being optimized across. Explicitly excludes `load`/`print` (I/O), `normal` (technically deterministic given a seed, but deduplicating a "random sample" call would be a surprising thing to do silently), and `buy`/`sell` (Phase 7, not registered yet, but listed now per the merge notes).
+- [x] `constant_fold.py`: folds a `BinOp` whose both operands trace to `LoadConst` into one `LoadConst`, removing the original operand constants if they end up unused — but never the fold's *own* result, regardless of whether anything downstream reads it (that's DCE's job). Leaves a folded `1/0` as a real `BinOp` rather than raising at "compile" time.
+- [x] `dce.py`: removes a `StoreVar`/`LoadConst`/`LoadVar`/`BinOp`/`UnaryOp`/`MemberGet`/`Move` whose destination is never read *anywhere in the whole program* (not "read strictly after this point") — the simpler, whole-program check that sidesteps the loop-carried-liveness trap by construction, at the cost of being more conservative than a real forward-flow analysis would be (documented trade-off). Runs to a **fixpoint**, not a single pass: found via a failing test that removing one dead `StoreVar` can strand a `LoadConst` that only ever fed it, which a single pass would leave behind. Never removes a `Call` regardless of liveness.
+- [x] `cse.py`: `const_cache` (keyed by `(type, value)`, so `Int(1)` and `Float(1.0)` don't collide), `var_reg_cache` (variable name → register currently holding its value, updated on both `LoadVar` and `StoreVar` — this is what makes reassignment invalidate CSE with no separate "clear everything" step), `expr_cache`/`call_cache` for `BinOp`/pure `Call`s. **A second control-flow-join bug found by actually running optimized code, not just structural assertions**: none of the spec's CSE tests exercise a loop or a branch, so the positive/negative tests alone passed while the pass was still wrong — lowering and optimizing a real `for` loop produced IR that silently computed the wrong answer, because `var_reg_cache`/`expr_cache`/`call_cache` weren't being invalidated at `Label`s, so a register loaded *before* a loop or `if`/`else` got reused for a read *inside* it. Fixed by clearing those three caches (not `const_cache`, which is path-independent) at every `Label`; added regression tests for both the loop and the if/else case.
+- [x] `pass_manager.py`: `run_passes(program, passes, enabled)`.
+- [x] `tests/unit/test_optimizer.py`: 16 tests — every case the spec asked for (constant-fold collapse, DCE removing a dead store but never a `Call`, the loop-increment negative test, CSE's positive/negative reassignment cases, CSE's impure-call negative tests) plus the two control-flow-join regression tests above.
+
+317 tests total, ruff + mypy clean. Verified beyond the test suite: lowered + fully optimized (constant-fold → DCE → CSE) versions of a `for` loop, a recursive `factorial`, and an `if`/`else` all execute to the correct answer through the IR interpreter.

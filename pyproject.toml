@@ -77,9 +77,14 @@ no_implicit_optional = true
 exclude = ["tests/", "benchmarks/", "examples/"]
 
 [[tool.mypy.overrides]]
-# Phase 1 evaluates untyped `Node = tuple[Any, ...]` trees by design (see
-# docs/architecture.md), so every node[i] access is legitimately Any --
-# warn_return_any would fire on nearly every return in this module. Revisit
-# once Phase 2 replaces hand-built tuples with a typed AST.
-module = "allie.runtime.interpreter"
+# Both interpreters' binary-op helpers assign promote_numeric's Any-typed
+# result to a fresh local (not the Value-annotated `left`/`right`
+# parameters themselves -- reassigning an annotated parameter keeps mypy
+# holding it to the full Value union, which fails every non-numeric
+# operand check; a plain local narrows to Any instead, matching the
+# runtime behavior). That local's inferred-Any return still triggers
+# warn_return_any against each function's declared `-> Value`; silenced
+# here rather than by scattering `# type: ignore[no-any-return]` at every
+# arithmetic branch.
+module = ["allie.runtime.interpreter", "allie.ir.interpreter"]
 warn_return_any = false
