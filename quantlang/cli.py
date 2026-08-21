@@ -42,14 +42,14 @@ def run_command(args: argparse.Namespace) -> int:
     # This wiring exists now so --dump-tokens / --dump-ast / --trace
     # have a stable CLI surface to attach to as each phase lands.
     if args.dump_tokens:
-        print("(lexer not implemented yet — Phase 1)")
+        print("(lexer not implemented yet - Phase 1)")
         return 0
     if args.dump_ast:
-        print("(parser not implemented yet — Phase 1)")
+        print("(parser not implemented yet - Phase 1)")
         return 0
 
     print(
-        f"(interpreter not implemented yet — Phase 1+) "
+        f"(interpreter not implemented yet - Phase 1+) "
         f"read {len(source)} bytes from {source_path}"
     )
     diagnostics.print_all()
