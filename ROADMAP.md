@@ -36,26 +36,29 @@ no more `compiler/` nesting. `QuantLang*Error` classes renamed to
 `Qubit*Error`. CLI command is now `qubit`. `pyproject.toml` project name,
 entry point, and package list all updated; `uv.lock` regenerated.
 
-## Phase 2 — Lexer & Parser (in progress)
+## Phase 2 — Lexer & Parser (2.1 done, 2.2 grammar written, parser next)
 
-Spec received for **2.1 Lexer** (`qubit/lexer/`): token types, a
-`KEYWORD_ALIASES` table mapping both canonical and slang spellings to the
-same `TokenType` (single lookup table, no branching on which spelling was
-used), `Lexer`/`scan_tokens`/`scan_token`, numbers/strings/comments,
-case-sensitive keyword lookup, multi-error collection on invalid
-characters, and a matching `tests/unit/test_lexer.py`. Not yet
-implemented — building next.
+### 2.1 Lexer (done)
 
-**2.2 Grammar (`docs/grammar.md`)** was flagged as "write before coding the
-parser" but the actual merged EBNF content was cut off mid-paste — still
-waiting on that before finalizing `docs/grammar.md`. `docs/grammar.ebnf`
-(Phase 0 placeholder) stays in place until it's superseded.
+- [x] `qubit/lexer/tokens.py`: `TokenType` (50 members), `Token` dataclass
+- [x] `qubit/lexer/keywords.py`: `KEYWORD_ALIASES` (single lookup table, canonical + slang spellings -> identical `TokenType`; quant keywords canonical-only in v1), `render_keywords_markdown()`
+- [x] `qubit/lexer/lexer.py`: `Lexer.scan_tokens`/`scan_token` — numbers (digit required on both sides of `.`), strings with escapes, `//` comments, case-sensitive keyword lookup, invalid characters collected into `.errors` (scanning continues), unterminated string raises immediately
+- [x] `qubit/lexer/errors.py`: `LexError`
+- [x] `scripts/generate_keywords_doc.py` + `docs/keywords.md` (generated, not hand-edited)
+- [x] `tests/unit/test_lexer.py`: 104 tests — every `TokenType` in isolation, exact token sequence, number/string/comment edge cases, multi-char operators, invalid-character collection, line/column tracking, every `KEYWORD_ALIASES` entry parametrized, mixed canonical/goofy/quant keyword file, and a drift check against `docs/keywords.md`
 
-- [ ] `qubit/lexer/tokens.py`, `qubit/lexer/keywords.py`, `qubit/lexer/lexer.py`, `qubit/lexer/errors.py`
-- [ ] `docs/keywords.md` generated from `KEYWORD_ALIASES`
-- [ ] `docs/grammar.md` — blocked on the full EBNF from the user
-- [ ] `tests/unit/test_lexer.py`
-- [ ] Parser producing nodes in the exact tuple shape Phase 1's evaluator already consumes, recovering into `DiagnosticBag` instead of raising
+Reconciled while building: `and`/`or` were in `TokenType` but missing from
+the pasted `KEYWORD_ALIASES` example — added as canonical-only entries
+(`logic_and`/`logic_or` need them as keyword tokens).
+
+### 2.2 Grammar (done)
+
+- [x] `docs/grammar.md` — full merged EBNF, written before `parser.py` exists. Reconciled two conflicts against already-committed decisions rather than silently picking a side: type annotations kept **optional** (pasted grammar had no `?`, which would contradict the locked gradual-typing decision and break `hello_world.ql`); generics kept as **`Series[float]`** (pasted grammar used `<float>`, but everything already committed uses brackets, which also avoid the `<`/`>`-vs-comparison ambiguity). Also fixed `factor`'s multiplication alternative, dropped in the paste, and added the `arguments` production referenced but never defined.
+- `docs/grammar.ebnf` (Phase 0 placeholder) is now superseded by `docs/grammar.md`.
+
+### Next: Parser
+
+- [ ] Recursive-descent parser producing nodes in the exact tuple shape Phase 1's evaluator already consumes, recovering into `DiagnosticBag` instead of raising
 - [ ] `--dump-tokens` / `--dump-ast` wired to real output
 - Goal: `qubit run examples/hello_world.ql --dump-ast` prints a full AST, and the Phase 1 evaluator can run it end to end
 
