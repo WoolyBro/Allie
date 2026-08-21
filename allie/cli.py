@@ -1,8 +1,14 @@
 """Command-line entry point for Allie.
 
 Phase 0: wires up the argument surface and debug flags the lexer/parser
-phases will need (--dump-tokens, --dump-ast, --trace). The actual
-lex -> parse -> run pipeline is stubbed until Phase 2 lands.
+phases will need (--dump-tokens, --dump-ast, --trace). Phase 2/3 fill the
+pipeline in: lex -> parse -> resolve -> type-check, halting with every
+collected diagnostic printed if any static pass fails, before execution
+is even attempted.
+
+Execution itself is still stubbed: allie.runtime.interpreter (Phase 1)
+walks hand-built tuples, not the dataclass AST allie.parser produces
+(Phase 2.3) -- that adaptation hasn't happened yet, see ROADMAP.md.
 """
 
 from __future__ import annotations
@@ -12,6 +18,11 @@ import sys
 from pathlib import Path
 
 from allie.errors import DiagnosticBag
+from allie.lexer.lexer import Lexer
+from allie.parser.parser import Parser
+from allie.semantic.resolver import Resolver
+from allie.typechecker.checker import TypeChecker
+from allie.typechecker.errors import QSTypeError
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -34,24 +45,47 @@ def run_command(args: argparse.Namespace) -> int:
         return 1
 
     source = source_path.read_text(encoding="utf-8")
-    diagnostics = DiagnosticBag()
 
-    # Phase 0 stub: lexer/parser land in Phase 2. The evaluator itself
-    # exists (allie.runtime.interpreter, Phase 1) but has nothing to run
-    # until the parser can produce trees for it.
+    lexer = Lexer(source)
+    tokens = lexer.scan_tokens()
     if args.dump_tokens:
-        print("(lexer not implemented yet - Phase 2)")
-        return 0
+        for token in tokens:
+            print(f"{token.line}:{token.column} {token.type.name} {token.lexeme!r}")
+
+    diagnostics = DiagnosticBag()
+    parser = Parser(tokens, diagnostics)
+    program = parser.parse()
     if args.dump_ast:
-        print("(parser not implemented yet - Phase 2)")
+        for stmt in program.statements:
+            print(stmt)
+
+    if lexer.errors:
+        for lex_error in lexer.errors:
+            print(lex_error, file=sys.stderr)
+        return 1
+    if diagnostics.has_errors():
+        diagnostics.print_all()
+        return 1
+
+    if args.dump_tokens or args.dump_ast:
         return 0
 
-    print(
-        f"(lexer/parser not implemented yet - Phase 2) "
-        f"read {len(source)} bytes from {source_path}"
-    )
-    diagnostics.print_all()
-    return 1 if diagnostics.has_errors() else 0
+    resolver = Resolver(diagnostics)
+    resolver.resolve(program)
+    if diagnostics.has_errors():
+        diagnostics.print_all()
+        return 1
+
+    try:
+        TypeChecker().check(program)
+    except QSTypeError as error:
+        print(error, file=sys.stderr)
+        return 1
+
+    # Static passes all clean -- execution itself is still stubbed, see
+    # this module's docstring for why.
+    print(f"(execution not implemented yet - interpreter/AST adaptation) {source_path} type-checks")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:

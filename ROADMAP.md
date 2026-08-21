@@ -56,17 +56,50 @@ the pasted `KEYWORD_ALIASES` example — added as canonical-only entries
 - [x] `docs/grammar.md` — full merged EBNF, written before `parser.py` exists. Reconciled two conflicts against already-committed decisions rather than silently picking a side: type annotations kept **optional** (pasted grammar had no `?`, which would contradict the locked gradual-typing decision and break `hello_world.ql`); generics kept as **`Series[float]`** (pasted grammar used `<float>`, but everything already committed uses brackets, which also avoid the `<`/`>`-vs-comparison ambiguity). Also fixed `factor`'s multiplication alternative, dropped in the paste, and added the `arguments` production referenced but never defined.
 - `docs/grammar.ebnf` (Phase 0 placeholder) is now superseded by `docs/grammar.md`.
 
-### Next: Parser
+### 2.3 Parser + AST (done — designed here, no spec was ever sent)
 
-- [ ] Recursive-descent parser producing nodes in the exact tuple shape Phase 1's evaluator already consumes, recovering into `DiagnosticBag` instead of raising
-- [ ] `--dump-tokens` / `--dump-ast` wired to real output
-- Goal: `allie run examples/hello_world.ql --dump-ast` prints a full AST, and the Phase 1 evaluator can run it end to end
+Phase 3's typechecker spec assumed a parser, a real (mutable, attribute-
+bearing) AST, and a resolver already existed. None of that had been
+built or specified. Rather than guess piecemeal, this was designed from
+scratch against `docs/grammar.md`:
 
-## Phases 3–13
+- [x] `allie/ast/nodes.py` — dataclass AST (`LetStmt`, `FuncDecl`, `Binary`, `Call`, `StrategyDecl`, `WhenClause`, `BacktestStmt`, ...), each carrying a `SourceSpan`; expression nodes carry a mutable `inferred_type` field the typechecker annotates. **Departure from the Phase 1 plan**: the evaluator was meant to consume "the exact tuple shape" the parser produces, but Phase 3 needs mutable per-node type annotations tuples can't hold — `allie.runtime.interpreter` has *not* been adapted to walk these nodes yet. Running a real `.ql` file end to end through the Phase 1 evaluator is still blocked on that adaptation.
+- [x] `allie/parser/parser.py` — recursive-descent, one method per grammar production, precedence climbing for expressions. Errors go through `DiagnosticBag` (collect-and-report-all) via an internal `_ParseError` signal + `_synchronize()`, the same shape as the interpreter's `BreakSignal`/`ContinueSignal`.
+- [x] `tests/unit/test_parser.py` — 22 tests, one per grammar production plus error-recovery cases.
 
-Fill in from prior planning notes (semantic analysis / gradual typing,
-the 5 indicators, event-driven backtest engine, walk-forward +
-multiple-comparisons stats tooling, benchmarking, paper writeup, etc.) —
+### 2.4 Resolver (done — also designed here)
+
+Phase 3's spec repeatedly referenced "Phase 2's resolver" tracking
+`loop_depth`/`inside_strategy`/`inside_when` — nothing matching existed.
+Built `allie/semantic/resolver.py`: a `Scope` stack (name-existence only,
+*not* types — kept deliberately separate from the typechecker's own
+`TypeEnvironment`) plus the counters/flags Phase 3 assumed, validating
+`break`/`continue` (loop only), `return` (function only), `when`
+(strategy only), and `backtest`'s strategy reference. Deliberately does
+*not* existence-check a bare identifier used as a call's callee (no
+builtin registry exists yet — see Phase 3 notes below). 17 tests in
+`tests/unit/test_resolver.py`.
+
+## Phase 3 — Static typing (done)
+
+- [x] `allie/typechecker/types.py`: `Type` base with `__str__`-derived structural `__eq__`/`__hash__` (works "for free" on `ArrayType`/`FunctionType` too); `IntType`/`FloatType`/`BoolType`/`StringType`/`VoidType` singletons; `is_assignable` (`Int -> Float` widens, everything else including narrowing rejected) keyed by a `(str, str)` table so Phase 4's `SeriesType` etc. slot in without reworking equality or assignability.
+- [x] `allie/typechecker/checker.py`: `TypeChecker` walks the AST, annotates `expr.inferred_type`, raises `QSTypeError` fail-fast (not collect-and-report — a deliberate difference from the lexer/parser, explained in the module docstring) on: `let` assignability, arithmetic/comparison/equality/logical operator rules, unary `-`/`!`, call arity + arg-type checking, `if`/`while`/`for` conditions requiring exact `Bool`, functions requiring explicit param/return types (v1 limitation, documented not silently inferred), and "every path returns" for non-`Void` functions (flat structural check, not full CFG reachability). `when`-clause `Series<Float>` checking and `backtest` strategy-type validation are stubbed with `TODO` markers referencing the phases that unblock them (4 and 7), not silently skipped.
+- [x] `allie/typechecker/errors.py`: `QSTypeError` — `"TypeError: {message}. Line {line}, Column {column}"`, exactly.
+- [x] `docs/language-reference.md`: the assignability table, plus every v1 limitation written down (explicit types required, flat return-path check, `when`/`backtest`/field-access stubs).
+- [x] `tests/unit/test_typechecker.py`: 31 tests matching every spec bullet (passing + failing pairs, exact-message assertion, arity/arg-type mismatches, recursive type-checking, `if`/`while`/`for` condition checks tested separately, missing-return vs. returns-on-every-path, and a regression net running every Phase-1/2 evaluator-style program — including `for`/`break`/`continue` — through the checker).
+- [x] **Wire-in**: `allie/cli.py`'s `run` command now runs lex → parse → resolve → type-check, halting with diagnostics printed if any static pass fails. Execution itself stays stubbed (see the AST/tuple gap above) — kept the file named `cli.py` rather than the spec's suggested `main.py` rename, since nothing else in this repo uses that name and the rename wasn't confirmed.
+- [x] Fixed `examples/hello_world.ql`, which had drifted from the Phase 2.2 grammar (lowercase `str`/`float` instead of `String`/`Float`, keyword arguments and `[index]` subscripting that were never added to the grammar, and an ad-hoc `backtest NAME { on_bar { ... } }` block that doesn't match `backtestStmt`'s actual `"backtest" NAME "on" SYMBOL "from" N "to" M ";"` shape). It now parses and produces a full AST (`--dump-ast` exits 0); full `run` still fails at the typechecker on `undefined name 'print'` since there's no builtin/stdlib function-type registry yet — expected, not a bug, and out of scope for what Phase 3 asked for.
+
+199 tests total, ruff + mypy clean.
+
+## Phases 4–13
+
+Fill in from prior planning notes (the 5 indicators, `SeriesType` and the
+rest of the quant type system, event-driven backtest engine, walk-forward
++ multiple-comparisons stats tooling, benchmarking, paper writeup, etc.) —
 not reconstructed here since these phases weren't pasted into this
-session. Whatever list existed before this scaffold should slot in
-against the directories already created.
+session. Two concrete follow-ups already known from building Phase 3:
+adapt `allie.runtime.interpreter` to walk the real AST instead of
+hand-built tuples, and give the typechecker/resolver a builtin function
+registry so programs that call `print`/`sma`/`load_csv`/etc. can actually
+pass type-checking.
