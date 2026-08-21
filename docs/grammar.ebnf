@@ -1,0 +1,46 @@
+(* QuantLang grammar skeleton — Phase 0 placeholder.
+   Brace-based syntax per docs/spec.md. Fill in during Phase 1 (lexer/parser).
+   Kept intentionally sparse: this is a target to build toward, not a
+   finished spec. *)
+
+program        = { statement } ;
+
+statement      = let_stmt
+               | assign_stmt
+               | expr_stmt
+               | if_stmt
+               | backtest_stmt
+               | import_stmt
+               | function_decl ;
+
+let_stmt       = "let" , identifier , [ ":" , type_annotation ] , "=" , expression , ";" ;
+
+type_annotation = identifier , [ "[" , type_annotation , "]" ] ;
+
+function_decl  = "fn" , identifier , "(" , [ param_list ] , ")" ,
+                 [ "->" , type_annotation ] , block ;
+
+param_list     = param , { "," , param } ;
+param          = identifier , [ ":" , type_annotation ] ;
+
+block          = "{" , { statement } , "}" ;
+
+if_stmt        = "if" , expression , block , [ "else" , ( if_stmt | block ) ] ;
+
+import_stmt    = "import" , string_literal , ";" ;
+
+(* First-class backtest construct — see docs/spec.md "Transaction costs". *)
+backtest_stmt  = "backtest" , identifier , "{" ,
+                    "on_bar" , "(" , [ param_list ] , ")" , block ,
+                    [ "slippage_model" , ":" , expression , ";" ] ,
+                  "}" ;
+
+expr_stmt      = expression , ";" ;
+assign_stmt    = identifier , "=" , expression , ";" ;
+
+expression     = literal | identifier | binary_expr | call_expr ;
+binary_expr    = expression , operator , expression ;
+call_expr      = identifier , "(" , [ arg_list ] , ")" ;
+arg_list       = expression , { "," , expression } ;
+
+literal        = number_literal | string_literal | bool_literal ;

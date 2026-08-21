@@ -1,0 +1,67 @@
+[project]
+name = "quantlang"
+version = "0.1.0"
+description = "A gradually-typed DSL for quantitative trading research, with first-class backtesting semantics."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Ayush Mondal" }]
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.2",
+]
+
+[project.scripts]
+quantlang = "quantlang.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+    "mypy>=1.10",
+    "pre-commit>=3.7",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = [
+    "quantlang",
+    "compiler",
+    "compiler.lexer",
+    "compiler.parser",
+    "compiler.ast",
+    "compiler.semantic",
+    "compiler.codegen",
+    "runtime",
+    "runtime.interpreter",
+    "runtime.values",
+    "runtime.errors",
+    "stdlib",
+    "quant",
+    "quant.types",
+    "quant.indicators",
+    "quant.backtest",
+    "quant.stats",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "N"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_ignores = true
+disallow_untyped_defs = true
+no_implicit_optional = true
+exclude = ["tests/", "benchmarks/", "examples/"]
