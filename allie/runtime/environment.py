@@ -8,8 +8,8 @@ of the same name in an ancestor frame).
 
 from __future__ import annotations
 
-from qubit.runtime.errors import QubitNameError
-from qubit.runtime.values import Value
+from allie.runtime.errors import AllieNameError
+from allie.runtime.values import Value
 
 
 class Environment:
@@ -26,7 +26,7 @@ class Environment:
             if name in env.vars:
                 return env.vars[name]
             env = env.parent
-        raise QubitNameError(f"undefined name: {name!r}")
+        raise AllieNameError(f"undefined name: {name!r}")
 
     def assign(self, name: str, value: Value) -> None:
         env: Environment | None = self
@@ -35,4 +35,4 @@ class Environment:
                 env.vars[name] = value
                 return
             env = env.parent
-        raise QubitNameError(f"cannot assign to undefined name: {name!r}")
+        raise AllieNameError(f"cannot assign to undefined name: {name!r}")

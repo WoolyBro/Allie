@@ -1,4 +1,4 @@
-# Qubit Language Reference
+# Allie Language Reference
 
 Filled in incrementally as each language feature actually lands — see
 `docs/architecture.md` for pipeline status and `docs/grammar.ebnf` (Phase 0

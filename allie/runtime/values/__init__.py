@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from qubit.runtime.environment import Environment
+    from allie.runtime.environment import Environment
 
 
 def promote_numeric(left: Any, right: Any) -> tuple[Any, Any]:

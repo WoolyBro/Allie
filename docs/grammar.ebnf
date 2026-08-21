@@ -1,4 +1,4 @@
-(* Qubit grammar skeleton — Phase 0 placeholder, superseded by the full
+(* Allie grammar skeleton — Phase 0 placeholder, superseded by the full
    merged grammar in docs/grammar.md once Phase 2 lands (control-flow
    keyword aliases, strategy/backtest/when/crosses_above/crosses_below
    constructs). Brace-based syntax per docs/spec.md. Kept intentionally

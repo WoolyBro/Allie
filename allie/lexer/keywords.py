@@ -1,5 +1,5 @@
 """Single source of truth for keyword resolution -- both canonical and
-slang spellings map to the identical TokenType. qubit.lexer.lexer.Lexer
+slang spellings map to the identical TokenType. allie.lexer.lexer.Lexer
 never branches on "goofy vs canonical"; it's one dict lookup, so the
 parser and everything downstream stays unaware of which spelling was
 used.
@@ -20,7 +20,7 @@ the two drift apart.
 
 from __future__ import annotations
 
-from qubit.lexer.tokens import TokenType
+from allie.lexer.tokens import TokenType
 
 KEYWORD_ALIASES: dict[str, TokenType] = {
     "let": TokenType.LET,
@@ -70,7 +70,7 @@ def render_keywords_markdown() -> str:
     lines = [
         "# Keywords",
         "",
-        "Generated from `qubit/lexer/keywords.py`'s `KEYWORD_ALIASES` -- do not "
+        "Generated from `allie/lexer/keywords.py`'s `KEYWORD_ALIASES` -- do not "
         "hand-edit; run `python scripts/generate_keywords_doc.py` after changing "
         "that dict. `tests/unit/test_lexer.py` fails if this file drifts from the "
         "code.",

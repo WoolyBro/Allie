@@ -1,4 +1,4 @@
-# Qubit Grammar (Phase 2, merged)
+# Allie Grammar (Phase 2, merged)
 
 Written before `parser.py` exists, per Phase 2.2. Supersedes
 `docs/grammar.ebnf` (the Phase 0 placeholder, which only covered
@@ -91,13 +91,13 @@ baseType       → "Int" | "Float" | "Bool" | "String" | "Void"
   even though `TokenType` defines them; added as canonical-only entries
   (see `docs/keywords.md`).
 - Slang keyword aliases (`ts` for `let`, `Ahhh` for `while`, etc. —
-  `qubit/lexer/keywords.py`) are transparent to this grammar: the lexer
+  `allie/lexer/keywords.py`) are transparent to this grammar: the lexer
   resolves every spelling to the same `TokenType` before the parser ever
   sees it, so every production above is spelling-agnostic by
   construction.
 - Number literals require a digit on both sides of the decimal point
   (`1.` and `.5` each lex as two tokens, never a malformed float) — see
-  `qubit/lexer/lexer.py`.
+  `allie/lexer/lexer.py`.
 
 ## Not yet covered
 

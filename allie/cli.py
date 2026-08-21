@@ -1,4 +1,4 @@
-"""Command-line entry point for Qubit.
+"""Command-line entry point for Allie.
 
 Phase 0: wires up the argument surface and debug flags the lexer/parser
 phases will need (--dump-tokens, --dump-ast, --trace). The actual
@@ -11,11 +11,11 @@ import argparse
 import sys
 from pathlib import Path
 
-from qubit.errors import DiagnosticBag
+from allie.errors import DiagnosticBag
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="qubit", description="Qubit compiler/interpreter CLI")
+    parser = argparse.ArgumentParser(prog="allie", description="Allie compiler/interpreter CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     run = subparsers.add_parser("run", help="Run a .ql source file")
@@ -37,7 +37,7 @@ def run_command(args: argparse.Namespace) -> int:
     diagnostics = DiagnosticBag()
 
     # Phase 0 stub: lexer/parser land in Phase 2. The evaluator itself
-    # exists (qubit.runtime.interpreter, Phase 1) but has nothing to run
+    # exists (allie.runtime.interpreter, Phase 1) but has nothing to run
     # until the parser can produce trees for it.
     if args.dump_tokens:
         print("(lexer not implemented yet - Phase 2)")

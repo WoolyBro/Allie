@@ -1,7 +1,7 @@
-"""LexError -- raised/recorded by qubit.lexer.lexer.Lexer.
+"""LexError -- raised/recorded by allie.lexer.lexer.Lexer.
 
 Two different failure modes, deliberately handled differently (see
-qubit.lexer.lexer docstring for the full rationale):
+allie.lexer.lexer docstring for the full rationale):
 
 - An unterminated string hits EOF with nothing left to recover with, so
   it's raised immediately as a Python exception.

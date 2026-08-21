@@ -1,4 +1,4 @@
-"""Qubit's tokenizer -- Phase 2.1.
+"""Allie's tokenizer -- Phase 2.1.
 
 Design decisions written down here so they don't need rediscovering:
 
@@ -26,9 +26,9 @@ Design decisions written down here so they don't need rediscovering:
 
 from __future__ import annotations
 
-from qubit.lexer.errors import LexError
-from qubit.lexer.keywords import KEYWORD_ALIASES
-from qubit.lexer.tokens import Token, TokenType
+from allie.lexer.errors import LexError
+from allie.lexer.keywords import KEYWORD_ALIASES
+from allie.lexer.tokens import Token, TokenType
 
 _SIMPLE_SINGLE_CHAR: dict[str, TokenType] = {
     "+": TokenType.PLUS,

@@ -8,7 +8,7 @@ from __future__ import annotations
 import subprocess
 import sys
 
-from qubit.errors import Diagnostic, DiagnosticBag, Severity, SourceSpan
+from allie.errors import Diagnostic, DiagnosticBag, Severity, SourceSpan
 
 
 def test_diagnostic_bag_collects_multiple_errors() -> None:
@@ -35,10 +35,10 @@ def test_diagnostic_render_includes_caret() -> None:
 
 def test_cli_help_runs() -> None:
     result = subprocess.run(
-        [sys.executable, "-m", "qubit", "--help"],
+        [sys.executable, "-m", "allie", "--help"],
         capture_output=True,
         text=True,
         timeout=10,
     )
     assert result.returncode == 0
-    assert "qubit" in result.stdout.lower()
+    assert "allie" in result.stdout.lower()

@@ -1,7 +1,7 @@
-"""Token types and the Token record produced by qubit.lexer.lexer.
+"""Token types and the Token record produced by allie.lexer.lexer.
 
 TokenType enumerates every terminal the Phase 2 parser will see. Control-
-flow keywords support slang aliases (qubit.lexer.keywords); quant
+flow keywords support slang aliases (allie.lexer.keywords); quant
 keywords (STRATEGY, WHEN, CROSSES_ABOVE, ...) are canonical-only in v1 --
 see docs/keywords.md.
 """

@@ -1,4 +1,4 @@
-"""Regenerate docs/keywords.md from qubit.lexer.keywords.KEYWORD_ALIASES.
+"""Regenerate docs/keywords.md from allie.lexer.keywords.KEYWORD_ALIASES.
 
 Run after editing KEYWORD_ALIASES:
 
@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from qubit.lexer.keywords import render_keywords_markdown
+from allie.lexer.keywords import render_keywords_markdown
 
 
 def main() -> None:

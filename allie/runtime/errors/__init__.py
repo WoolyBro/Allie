@@ -1,4 +1,4 @@
-"""Runtime error hierarchy — distinct from qubit.errors.
+"""Runtime error hierarchy — distinct from allie.errors.
 
 Design decision (Phase 0.6): runtime errors raise Python exceptions and
 halt the running strategy, rather than propagating as Result-style
@@ -14,11 +14,11 @@ error proves too coarse for long backtests.
 
 from __future__ import annotations
 
-from qubit.errors import SourceSpan
+from allie.errors import SourceSpan
 
 
-class QubitRuntimeError(Exception):
-    """Base class for all errors raised while executing Qubit code."""
+class AllieRuntimeError(Exception):
+    """Base class for all errors raised while executing Allie code."""
 
     def __init__(self, message: str, span: SourceSpan | None = None) -> None:
         super().__init__(message)
@@ -26,13 +26,13 @@ class QubitRuntimeError(Exception):
         self.span = span
 
 
-class QubitTypeError(QubitRuntimeError):
+class AllieTypeError(AllieRuntimeError):
     """Raised when a gradual-typing annotation is violated at runtime."""
 
 
-class QubitNameError(QubitRuntimeError):
+class AllieNameError(AllieRuntimeError):
     """Raised when an identifier is not bound in the current scope."""
 
 
-class QubitValueError(QubitRuntimeError):
+class AllieValueError(AllieRuntimeError):
     """Raised for invalid operand values (e.g. division by zero)."""

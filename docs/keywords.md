@@ -1,6 +1,6 @@
 # Keywords
 
-Generated from `qubit/lexer/keywords.py`'s `KEYWORD_ALIASES` -- do not hand-edit; run `python scripts/generate_keywords_doc.py` after changing that dict. `tests/unit/test_lexer.py` fails if this file drifts from the code.
+Generated from `allie/lexer/keywords.py`'s `KEYWORD_ALIASES` -- do not hand-edit; run `python scripts/generate_keywords_doc.py` after changing that dict. `tests/unit/test_lexer.py` fails if this file drifts from the code.
 
 Lookup is case-sensitive: `Ahhh` (while) and `ahhh` are different tokens.
 

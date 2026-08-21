@@ -1,4 +1,4 @@
-"""Tests for qubit/lexer/ (Phase 2.1). No parser exists yet -- these only
+"""Tests for allie/lexer/ (Phase 2.1). No parser exists yet -- these only
 check the token stream Lexer produces."""
 
 from __future__ import annotations
@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from qubit.lexer.errors import LexError
-from qubit.lexer.keywords import KEYWORD_ALIASES, render_keywords_markdown
-from qubit.lexer.lexer import Lexer
-from qubit.lexer.tokens import TokenType
+from allie.lexer.errors import LexError
+from allie.lexer.keywords import KEYWORD_ALIASES, render_keywords_markdown
+from allie.lexer.lexer import Lexer
+from allie.lexer.tokens import TokenType
 
 _TOKEN_SAMPLES: dict[TokenType, str] = {
     TokenType.LET: "let",
