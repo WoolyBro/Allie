@@ -92,14 +92,44 @@ builtin registry exists yet — see Phase 3 notes below). 17 tests in
 
 199 tests total, ruff + mypy clean.
 
-## Phases 4–13
+## Phase 4 — Quantitative types & standard library (done)
 
-Fill in from prior planning notes (the 5 indicators, `SeriesType` and the
-rest of the quant type system, event-driven backtest engine, walk-forward
-+ multiple-comparisons stats tooling, benchmarking, paper writeup, etc.) —
+### 4.1 Type extensions
+
+- [x] `SeriesType`/`MatrixType`/`VectorType`/`DateType`/`DateRangeType` added to `allie/typechecker/types.py`, exactly as planned back in Phase 3 (no rework of `is_assignable`/`__eq__`/`__hash__` needed). Also added, beyond the original list, because they turned out to be genuinely necessary: `PriceSeriesType` (stdlib `load`'s return type) and `AnyType` (stdlib `print`'s parameter type — deliberately *not* user-writable, see `docs/language-reference.md`).
+- [x] `is_assignable`: scalar → Series is rejected (falls out of the existing logic with no new code — see the regression test guarding it), and `Series<Int>` does *not* widen to `Series<Float>` even though bare `Int` → `Float` does.
+- [x] `ArrayLiteral` now type-checks to `SeriesType(elem)`, not `ArrayType(elem)` — array literals default to `Series`, documented in `docs/language-reference.md`. `ArrayType` stays in `types.py` for a hypothetical future `Array[T]` annotation nothing currently produces.
+- [x] `WhenClause` operands now really require `Series<Float>` (Phase 3's `TODO` stub wired for real).
+- [x] `tests/unit/test_typechecker_quant.py`: 15 tests.
+- **Correction, not new work**: the spec framed generic syntax as `IDENTIFIER "<" type ">"`, "already done" in Phase 2.2/2.4. What's actually built uses brackets (`Series[Float]`) — a deliberate Phase 2.2 reconciliation (angle brackets reintroduce the `<`/`>`-vs-comparison ambiguity), unchanged here.
+
+### 4.2 Runtime representation
+
+- [x] `SeriesValue`/`MatrixValue`/`PriceSeriesValue`/`BuiltinFunction` added to `allie/runtime/values`. **Deviation from spec, documented**: `SeriesValue`/`MatrixValue` wrap plain numpy `float64` ndarrays, not `pandas.Series`/`DataFrame` — matches Phase 4's literal ask, but is a step back from `docs/spec.md`'s original "Series wraps pandas.Series" aspiration; revisit if real `DatetimeIndex` alignment is needed later. `PriceSeriesValue.dates` is a plain `datetime64[ns]` array rather than a `SeriesValue` (which is float64-only by construction) — a documented deviation from a literal "each a SeriesValue" reading.
+- [x] **The big one**: `allie/runtime/interpreter` rewritten to walk the real AST (`allie.ast.nodes`) instead of Phase 1's hand-built tuples — every semantic property Phase 1 proved (short-circuit `and`/`or`, closures by reference, recursion, `for`/`break`/`continue`, division-by-zero raising a custom error) is unchanged, just re-proved against source text through the real lexer/parser in the new `tests/unit/test_interpreter.py` (17 tests), which **replaces** `tests/unit/test_phase1_eval.py` (deleted — its hand-built tuples can no longer run against the new node-based contract). `ArrayLiteral` evaluates to a `SeriesValue`; `FieldAccess` reads `PriceSeriesValue`'s named fields (`prices.close`); `Call` dispatches to either a user `Closure` or a stdlib `BuiltinFunction` through the same path; `StrategyDecl`/`BacktestStmt` raise a clear "not executable yet" error (Phase 7 builds the actual backtest engine).
+
+### 4.3 Standard library
+
+- [x] `allie/stdlib/registry.py`: `BUILTINS` (name → `(FunctionType, Callable)`), `create_global_environment()`, `builtin_function_types()`. Importing `allie.stdlib` registers all 22 builtins as a side effect.
+- [x] `allie/stdlib/math_fns.py`: `mean`/`median`/`std`/`variance`/`covariance`/`correlation` — `ddof=1`, empty/single-element/mismatched-length series raise `AllieValueError` rather than returning `NaN`.
+- [x] `allie/stdlib/series_ops.py`: `SMA`/`EMA`/`rolling_mean`/`rolling_std`/`shift`/`diff`/`pct_change` — `SMA`/`rolling_mean` NaN-pad the first `window - 1` points (pandas convention). Generic `rolling(series, window, fn)` isn't built (no first-class function values from source yet); `rolling_mean`/`rolling_std` are the concrete stand-ins, as the spec allowed. `crosses_above`/`crosses_below` deliberately **not** built here — Phase 7's responsibility.
+- [x] `allie/stdlib/matrix_ops.py`: `transpose`/`inverse`/`determinant`/`dot` — singular matrix, non-square `determinant`, and dimension-mismatched `dot` all raise `AllieValueError`, never a raw numpy error.
+- [x] `allie/stdlib/stats_fns.py`: `zscore`/`percentile`, and `normal` — **with an added, required `seed` parameter** beyond the literal spec (`normal(Float, Float, Int) -> Series<Float>`), to honor the already-locked "explicit seed, no hidden global RNG" decision in `docs/spec.md`.
+- [x] `allie/stdlib/io.py`: `load` (CSV → `PriceSeriesValue`, case-insensitive column matching, names the missing column) and `print` (compact `SeriesValue` formatting, `Void`/`Unit` return type).
+- [x] `tests/unit/test_stdlib_{math,series,matrix,stats,io}.py`: 46 tests, hand-computed values cross-checked against pandas where useful (test-only dependency, never a runtime one).
+- [x] `tests/fixtures/AAPL_sample.csv`: 60-row synthetic OHLCV fixture (seeded random walk, reproducible).
+- [x] `tests/integration/test_quant_pipeline.py`: the `load` → `SMA` → `print` reference example end to end through the full pipeline, plus a second test combining it with a `for` loop over several window sizes — 2 tests.
+- [x] **Wire-in, finally real**: `allie/cli.py`'s `run` command now executes lex → parse → resolve → type-check → **run**, with `allie.stdlib`'s builtins visible to both the type checker and the interpreter. `allie run some_file.ql` actually computes and prints things now.
+
+262 tests total, ruff + mypy clean. (mypy's target bumped to `python_version = "3.12"` — numpy 2.5's bundled stubs use PEP 695 syntax mypy only parses under a 3.12+ target; our own code still supports 3.11, nothing here uses 3.12-only syntax.)
+
+## Phases 5–13
+
+Fill in from prior planning notes (optimizer/`PURE_FUNCTIONS`, the
+backtest engine and `crosses_above`/`crosses_below`, walk-forward +
+multiple-comparisons stats tooling, benchmarking, paper writeup, etc.) —
 not reconstructed here since these phases weren't pasted into this
-session. Two concrete follow-ups already known from building Phase 3:
-adapt `allie.runtime.interpreter` to walk the real AST instead of
-hand-built tuples, and give the typechecker/resolver a builtin function
-registry so programs that call `print`/`sma`/`load_csv`/etc. can actually
-pass type-checking.
+session. Known follow-ups from building Phase 4: `examples/hello_world.ql`
+still doesn't run end to end (`load_csv`/`sma` naming mismatches with the
+registry's `load`/`SMA`, and `buy`/`sell`/strategy execution wait on
+Phase 7) — not worth chasing further until those land.

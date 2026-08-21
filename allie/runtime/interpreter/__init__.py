@@ -1,21 +1,80 @@
-"""Phase 1: hand-built tree-walking evaluator.
+"""Tree-walking evaluator -- Phase 1 validated these semantics on
+hand-built tuples; Phase 4 needs real execution (ArrayLiteral producing
+a SeriesValue, FieldAccess reading a PriceSeriesValue, calling stdlib
+builtins), which requires walking the actual AST allie.parser.parser
+produces (allie.ast.nodes), not tuples. This module has been rewritten
+to dispatch on node *type* (isinstance checks against the dataclasses in
+allie.ast.nodes) instead of a tuple's first-element tag string.
 
-Nodes are plain tuples: ('num', 1), ('binop', '+', left, right), etc. --
-see docs/architecture.md "Phase 1 -- hand-built evaluator" and
-tests/unit/test_phase1_eval.py, which construct every tree by hand. This
-module is deliberately parser-free: Phase 2's real parser targets this same
-node shape, so this evaluator should not need to change when it lands.
+Every evaluation rule below is unchanged from Phase 1 -- short-circuit
+and/or, break/continue/return via internal signal exceptions, closures
+capturing their defining Environment by reference, division/modulo by
+zero raising AllieValueError -- only the node shape changed. See
+tests/unit/test_interpreter.py, which re-proves each of these properties
+by running real .ql source text through the full lex -> parse -> eval
+pipeline (superseding tests/unit/test_phase1_eval.py's hand-built
+tuples, which can no longer run against this module's new contract).
+
+Each `allie run` invocation should construct a fresh Environment/
+Interpreter so runs are isolated (docs/spec.md "Concurrency model").
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
+
+from allie.ast.nodes import (
+    ArrayLiteral,
+    Assignment,
+    BacktestStmt,
+    Binary,
+    Block,
+    BoolLiteral,
+    BreakStmt,
+    Call,
+    ContinueStmt,
+    Expr,
+    ExprStmt,
+    FieldAccess,
+    ForStmt,
+    FuncDecl,
+    Identifier,
+    IfStmt,
+    ImportStmt,
+    LetStmt,
+    Logical,
+    NumberLiteral,
+    Program,
+    ReturnStmt,
+    Stmt,
+    StrategyDecl,
+    StringLiteral,
+    Unary,
+    WhileStmt,
+)
 from allie.runtime.environment import Environment
 from allie.runtime.errors import AllieValueError
-from allie.runtime.values import Closure, Value, promote_numeric
+from allie.runtime.values import (
+    BuiltinFunction,
+    Closure,
+    PriceSeriesValue,
+    SeriesValue,
+    Value,
+    promote_numeric,
+)
 
-Node = tuple[Any, ...]
+_COMPARISON_OPS: dict[str, Any] = {
+    "==": lambda a, b: a == b,
+    "!=": lambda a, b: a != b,
+    "<": lambda a, b: a < b,
+    ">": lambda a, b: a > b,
+    "<=": lambda a, b: a <= b,
+    ">=": lambda a, b: a >= b,
+}
+
+_PRICE_SERIES_FIELDS = ("open", "high", "low", "close", "volume", "dates")
 
 
 class BreakSignal(Exception):
@@ -38,69 +97,69 @@ def truthy(value: Value) -> bool:
     return bool(value)
 
 
-_COMPARISON_OPS: dict[str, Any] = {
-    "==": lambda a, b: a == b,
-    "!=": lambda a, b: a != b,
-    "<": lambda a, b: a < b,
-    ">": lambda a, b: a > b,
-    "<=": lambda a, b: a <= b,
-    ">=": lambda a, b: a >= b,
-}
+def run_program(program: Program, env: Environment) -> None:
+    for stmt in program.statements:
+        exec_stmt(stmt, env)
 
 
-def eval_expr(node: Node, env: Environment) -> Value:
-    tag = node[0]
+def eval_expr(node: Expr, env: Environment) -> Value:
+    if isinstance(node, (NumberLiteral, StringLiteral, BoolLiteral)):
+        return node.value
 
-    if tag in ("num", "str", "bool"):
-        return node[1]
+    if isinstance(node, Identifier):
+        return env.get(node.name)
 
-    if tag == "var":
-        return env.get(node[1])
-
-    if tag == "assign":
-        _, name, expr = node
-        value = eval_expr(expr, env)
-        env.assign(name, value)
+    if isinstance(node, Assignment):
+        value = eval_expr(node.value, env)
+        env.assign(node.name, value)
         return value
 
-    if tag == "unary":
-        _, op, operand_node = node
-        operand = eval_expr(operand_node, env)
-        if op == "-":
-            if isinstance(operand, bool) or not isinstance(operand, (int, float)):
-                raise AllieValueError(f"unary '-' requires a number, got {operand!r}")
-            return -operand
-        if op == "!":
-            return not truthy(operand)
-        raise AllieValueError(f"unknown unary operator: {op!r}")
+    if isinstance(node, Unary):
+        return _eval_unary(node, env)
 
-    if tag == "and":
-        _, left_node, right_node = node
-        left = eval_expr(left_node, env)
-        if not truthy(left):
-            return left
-        return eval_expr(right_node, env)
+    if isinstance(node, Logical):
+        left = eval_expr(node.left, env)
+        if node.operator == "and":
+            if not truthy(left):
+                return left
+            return eval_expr(node.right, env)
+        if node.operator == "or":
+            if truthy(left):
+                return left
+            return eval_expr(node.right, env)
+        raise AllieValueError(f"unknown logical operator: {node.operator!r}")
 
-    if tag == "or":
-        _, left_node, right_node = node
-        left = eval_expr(left_node, env)
-        if truthy(left):
-            return left
-        return eval_expr(right_node, env)
+    if isinstance(node, Binary):
+        return _eval_binary(node, env)
 
-    if tag == "binop":
-        return _eval_binop(node, env)
-
-    if tag == "call":
+    if isinstance(node, Call):
         return _eval_call(node, env)
 
-    raise AllieValueError(f"unknown expression node: {tag!r}")
+    if isinstance(node, FieldAccess):
+        return _eval_field_access(node, env)
+
+    if isinstance(node, ArrayLiteral):
+        elements = [eval_expr(e, env) for e in node.elements]
+        return SeriesValue(np.array(elements, dtype=np.float64))
+
+    raise AllieValueError(f"unknown expression node: {type(node).__name__}")
 
 
-def _eval_binop(node: Node, env: Environment) -> Value:
-    _, op, left_node, right_node = node
-    left = eval_expr(left_node, env)
-    right = eval_expr(right_node, env)
+def _eval_unary(node: Unary, env: Environment) -> Value:
+    operand = eval_expr(node.operand, env)
+    if node.operator == "-":
+        if isinstance(operand, bool) or not isinstance(operand, (int, float)):
+            raise AllieValueError(f"unary '-' requires a number, got {operand!r}")
+        return -operand
+    if node.operator == "!":
+        return not truthy(operand)
+    raise AllieValueError(f"unknown unary operator: {node.operator!r}")
+
+
+def _eval_binary(node: Binary, env: Environment) -> Value:
+    left = eval_expr(node.left, env)
+    right = eval_expr(node.right, env)
+    op = node.operator
 
     if op in _COMPARISON_OPS:
         return bool(_COMPARISON_OPS[op](left, right))
@@ -130,99 +189,114 @@ def _eval_binop(node: Node, env: Environment) -> Value:
     raise AllieValueError(f"unknown binary operator: {op!r}")
 
 
-def _eval_call(node: Node, env: Environment) -> Value:
-    _, callee_node, arg_nodes = node
-    callee = eval_expr(callee_node, env)
-    if not isinstance(callee, Closure):
-        raise AllieValueError(f"cannot call non-function value: {callee!r}")
+def _eval_call(node: Call, env: Environment) -> Value:
+    callee = eval_expr(node.callee, env)
+    args = [eval_expr(arg, env) for arg in node.arguments]
 
-    args = [eval_expr(arg, env) for arg in arg_nodes]
-    if len(args) != len(callee.params):
-        raise AllieValueError(
-            f"{callee!r} expects {len(callee.params)} argument(s), got {len(args)}"
-        )
+    if isinstance(callee, Closure):
+        if len(args) != len(callee.params):
+            raise AllieValueError(
+                f"expected {len(callee.params)} argument(s), got {len(args)}"
+            )
+        call_env = Environment(parent=callee.defining_env)
+        for name, value in zip(callee.params, args, strict=True):
+            call_env.define(name, value)
+        try:
+            exec_stmt(callee.body, call_env)
+        except ReturnSignal as ret:
+            return ret.value
+        return None
 
-    call_env = Environment(parent=callee.defining_env)
-    for name, value in zip(callee.params, args, strict=True):
-        call_env.define(name, value)
+    if isinstance(callee, BuiltinFunction):
+        return callee.fn(*args)
 
-    try:
-        exec_stmt(callee.body, call_env)
-    except ReturnSignal as ret:
-        return ret.value
-    return None
+    raise AllieValueError(f"cannot call non-function value: {callee!r}")
 
 
-def exec_stmt(node: Node, env: Environment) -> None:
-    tag = node[0]
+def _eval_field_access(node: FieldAccess, env: Environment) -> Value:
+    obj = eval_expr(node.obj, env)
+    if isinstance(obj, PriceSeriesValue):
+        if node.name in _PRICE_SERIES_FIELDS:
+            return getattr(obj, node.name)
+        raise AllieValueError(f"PriceSeriesValue has no field '{node.name}'")
+    raise AllieValueError(f"cannot access field '{node.name}' on {type(obj).__name__}")
 
-    if tag == "let":
-        _, name, expr = node
-        env.define(name, eval_expr(expr, env))
+
+def exec_stmt(node: Stmt, env: Environment) -> None:
+    if isinstance(node, LetStmt):
+        env.define(node.name, eval_expr(node.initializer, env))
         return
 
-    if tag == "expr_stmt":
-        eval_expr(node[1], env)
+    if isinstance(node, ExprStmt):
+        eval_expr(node.expression, env)
         return
 
-    if tag == "if":
-        _, cond, then_block, else_block = node
-        if truthy(eval_expr(cond, env)):
-            exec_stmt(then_block, env)
-        elif else_block is not None:
-            exec_stmt(else_block, env)
+    if isinstance(node, IfStmt):
+        if truthy(eval_expr(node.condition, env)):
+            exec_stmt(node.then_branch, env)
+        elif node.else_branch is not None:
+            exec_stmt(node.else_branch, env)
         return
 
-    if tag == "while":
-        _, cond, body = node
-        while truthy(eval_expr(cond, env)):
+    if isinstance(node, WhileStmt):
+        while truthy(eval_expr(node.condition, env)):
             try:
-                exec_stmt(body, env)
+                exec_stmt(node.body, env)
             except BreakSignal:
                 break
             except ContinueSignal:
                 continue
         return
 
-    if tag == "for":
+    if isinstance(node, ForStmt):
         _exec_for(node, env)
         return
 
-    if tag == "block":
-        _, statements = node
+    if isinstance(node, Block):
         block_env = Environment(parent=env)
-        for stmt in statements:
+        for stmt in node.statements:
             exec_stmt(stmt, block_env)
         return
 
-    if tag == "break":
+    if isinstance(node, BreakStmt):
         raise BreakSignal()
 
-    if tag == "continue":
+    if isinstance(node, ContinueStmt):
         raise ContinueSignal()
 
-    if tag == "return":
-        _, expr = node
-        value = eval_expr(expr, env) if expr is not None else None
+    if isinstance(node, ReturnStmt):
+        value = eval_expr(node.value, env) if node.value is not None else None
         raise ReturnSignal(value)
 
-    if tag == "func":
-        _, name, params, body = node
-        env.define(name, Closure(params=params, body=body, defining_env=env))
+    if isinstance(node, FuncDecl):
+        params = [param.name for param in node.params]
+        env.define(node.name, Closure(params=params, body=node.body, defining_env=env))
         return
 
-    raise AllieValueError(f"unknown statement node: {tag!r}")
+    if isinstance(node, ImportStmt):
+        # No module system exists yet -- inert, same treatment as the
+        # type checker's resolver/checker give it.
+        return
+
+    if isinstance(node, StrategyDecl):
+        raise AllieValueError(
+            "strategy declarations are not executable yet (backtest engine lands in Phase 7)"
+        )
+
+    if isinstance(node, BacktestStmt):
+        raise AllieValueError("backtest execution is not implemented yet (Phase 7)")
+
+    raise AllieValueError(f"unknown statement node: {type(node).__name__}")
 
 
-def _exec_for(node: Node, env: Environment) -> None:
-    _, init_let, cond, increment, body = node
+def _exec_for(node: ForStmt, env: Environment) -> None:
     loop_env = Environment(parent=env)
-    exec_stmt(init_let, loop_env)
-    while truthy(eval_expr(cond, loop_env)):
+    exec_stmt(node.initializer, loop_env)
+    while truthy(eval_expr(node.condition, loop_env)):
         try:
-            exec_stmt(body, loop_env)
+            exec_stmt(node.body, loop_env)
         except BreakSignal:
             break
         except ContinueSignal:
             pass
-        eval_expr(increment, loop_env)
+        eval_expr(node.increment, loop_env)

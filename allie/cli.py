@@ -1,14 +1,12 @@
 """Command-line entry point for Allie.
 
 Phase 0: wires up the argument surface and debug flags the lexer/parser
-phases will need (--dump-tokens, --dump-ast, --trace). Phase 2/3 fill the
-pipeline in: lex -> parse -> resolve -> type-check, halting with every
-collected diagnostic printed if any static pass fails, before execution
-is even attempted.
-
-Execution itself is still stubbed: allie.runtime.interpreter (Phase 1)
-walks hand-built tuples, not the dataclass AST allie.parser produces
-(Phase 2.3) -- that adaptation hasn't happened yet, see ROADMAP.md.
+phases will need (--dump-tokens, --dump-ast, --trace). The full pipeline
+is now wired: lex -> parse -> resolve -> type-check -> run, halting with
+every collected diagnostic printed if any static pass fails, before
+execution is even attempted. Importing `allie.stdlib` here triggers its
+builtin registration as a side effect, before a TypeChecker/Environment
+that need those builtins visible are constructed below.
 """
 
 from __future__ import annotations
@@ -17,9 +15,12 @@ import argparse
 import sys
 from pathlib import Path
 
+import allie.stdlib as stdlib
 from allie.errors import DiagnosticBag
 from allie.lexer.lexer import Lexer
 from allie.parser.parser import Parser
+from allie.runtime.errors import AllieRuntimeError
+from allie.runtime.interpreter import run_program
 from allie.semantic.resolver import Resolver
 from allie.typechecker.checker import TypeChecker
 from allie.typechecker.errors import QSTypeError
@@ -76,15 +77,21 @@ def run_command(args: argparse.Namespace) -> int:
         diagnostics.print_all()
         return 1
 
+    checker = TypeChecker()
+    for name, signature in stdlib.builtin_function_types().items():
+        checker.env.define(name, signature)
     try:
-        TypeChecker().check(program)
+        checker.check(program)
     except QSTypeError as error:
         print(error, file=sys.stderr)
         return 1
 
-    # Static passes all clean -- execution itself is still stubbed, see
-    # this module's docstring for why.
-    print(f"(execution not implemented yet - interpreter/AST adaptation) {source_path} type-checks")
+    env = stdlib.create_global_environment()
+    try:
+        run_program(program, env)
+    except AllieRuntimeError as error:
+        print(error, file=sys.stderr)
+        return 1
     return 0
 
 

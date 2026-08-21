@@ -55,13 +55,15 @@ from allie.typechecker.types import (
     BOOL,
     FLOAT,
     INT,
+    PRICE_SERIES,
     STRING,
     VOID,
-    ArrayType,
     FunctionType,
+    SeriesType,
     Type,
     is_assignable,
     resolve_base_type,
+    resolve_generic_type,
 )
 
 _ARITHMETIC_OPS = frozenset({"+", "-", "*", "/", "%"})
@@ -107,12 +109,15 @@ class TypeChecker:
 
     def _resolve_type_annotation(self, annotation: TypeAnnotation) -> Type:
         if annotation.type_arg is not None:
-            # Only array-shaped generics are meaningful for v1; Phase 4
-            # will register Series/Matrix/etc in resolve_base_type and
-            # this branch will need a real dispatch instead of always
-            # producing ArrayType. Tracked, not silently assumed correct
-            # forever.
-            return ArrayType(self._resolve_type_annotation(annotation.type_arg))
+            elem = self._resolve_type_annotation(annotation.type_arg)
+            generic = resolve_generic_type(annotation.name, elem)
+            if generic is None:
+                raise QSTypeError(
+                    f"'{annotation.name}' is not a generic type (expected Series/Matrix/Vector)",
+                    annotation.span.line,
+                    annotation.span.column,
+                )
+            return generic
         base = resolve_base_type(annotation.name)
         if base is None:
             raise QSTypeError(
@@ -251,13 +256,18 @@ class TypeChecker:
             self._check_when_clause(clause)
 
     def _check_when_clause(self, clause: WhenClause) -> None:
-        # TODO(Phase 4): left/right must type-check to Series<Float> once
-        # SeriesType exists (docs/spec.md "Statistical rigor" /
-        # "Backtest loop architecture"). Stubbed with a plain expression
-        # check rather than silently skipped, so this requirement isn't
-        # forgotten once SeriesType lands.
-        self._check_expr(clause.left)
-        self._check_expr(clause.right)
+        # Wired for real now that SeriesType exists (was a Phase 3 TODO
+        # stub). Both operands must be Series<Float> -- a strategy
+        # crossover check operates on a price/indicator history, not a
+        # single scalar.
+        for operand, side in ((clause.left, "left"), (clause.right, "right")):
+            operand_type = self._check_expr(operand)
+            if operand_type != SeriesType(FLOAT):
+                raise QSTypeError(
+                    f"'when' clause {side} operand must be Series<Float>, got {operand_type}",
+                    operand.span.line,
+                    operand.span.column,
+                )
         self._check_stmt(clause.body)
 
     def _check_backtest(self, stmt: BacktestStmt) -> None:
@@ -290,12 +300,7 @@ class TypeChecker:
         elif isinstance(expr, Call):
             result = self._check_call(expr)
         elif isinstance(expr, FieldAccess):
-            # No record/module type system exists yet to check field
-            # access properly (not specified by Phase 3). Still visits
-            # the object expression so nested errors surface, but
-            # doesn't claim a real type for the access itself.
-            self._check_expr(expr.obj)
-            result = VOID
+            result = self._check_field_access(expr)
         elif isinstance(expr, ArrayLiteral):
             result = self._check_array_literal(expr)
         else:
@@ -313,6 +318,23 @@ class TypeChecker:
         if found is None:
             raise QSTypeError(f"undefined name '{expr.name}'", expr.span.line, expr.span.column)
         return found
+
+    def _check_field_access(self, expr: FieldAccess) -> Type:
+        obj_type = self._check_expr(expr.obj)
+        if obj_type == PRICE_SERIES and expr.name in (
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+        ):
+            return SeriesType(FLOAT)
+        # No general record/module type system exists yet (docs/
+        # language-reference.md "Known limitations") -- anything else,
+        # including PriceSeries's own `.dates` field (there's no
+        # Series<Date> type to give it), is accepted as Void rather than
+        # claiming a type that can't be verified.
+        return VOID
 
     def _check_assignment(self, expr: Assignment) -> Type:
         declared = self.env.get(expr.name)
@@ -423,6 +445,11 @@ class TypeChecker:
         return callee_type.ret
 
     def _check_array_literal(self, expr: ArrayLiteral) -> Type:
+        # Array literals default to Series, not a bare Array: this
+        # language operates on series by default (docs/language-
+        # reference.md "Array literals default to Series") -- `[1, 2, 3]`
+        # is a Series<Int> a strategy could feed straight into SMA/mean/
+        # etc., not an opaque collection type nothing else understands.
         if not expr.elements:
             raise QSTypeError(
                 "cannot infer the type of an empty array literal (v1 has no "
@@ -439,7 +466,7 @@ class TypeChecker:
                     element.span.line,
                     element.span.column,
                 )
-        return ArrayType(first)
+        return SeriesType(first)
 
 
 def _all_paths_return(block: Block) -> bool:
