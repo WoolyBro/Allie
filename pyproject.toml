@@ -34,6 +34,9 @@ packages = [
     "compiler.parser",
     "compiler.ast",
     "compiler.semantic",
+    "compiler.typechecker",
+    "compiler.ir",
+    "compiler.optimizer",
     "compiler.codegen",
     "runtime",
     "runtime.interpreter",
@@ -57,6 +60,10 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "N"]
+# N818: control-flow signals (Break/Continue/ReturnSignal) are deliberately
+# not named *Error -- they are never surfaced to the user, same precedent
+# as StopIteration in the standard library.
+ignore = ["N818"]
 
 [tool.mypy]
 python_version = "3.11"
@@ -65,3 +72,11 @@ warn_unused_ignores = true
 disallow_untyped_defs = true
 no_implicit_optional = true
 exclude = ["tests/", "benchmarks/", "examples/"]
+
+[[tool.mypy.overrides]]
+# Phase 1 evaluates untyped `Node = tuple[Any, ...]` trees by design (see
+# docs/architecture.md), so every node[i] access is legitimately Any --
+# warn_return_any would fire on nearly every return in this module. Revisit
+# once Phase 2 replaces hand-built tuples with a typed AST.
+module = "runtime.interpreter"
+warn_return_any = false
