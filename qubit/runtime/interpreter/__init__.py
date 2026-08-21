@@ -11,9 +11,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from runtime.environment import Environment
-from runtime.errors import QuantLangValueError
-from runtime.values import Closure, Value, promote_numeric
+from qubit.runtime.environment import Environment
+from qubit.runtime.errors import QubitValueError
+from qubit.runtime.values import Closure, Value, promote_numeric
 
 Node = tuple[Any, ...]
 
@@ -68,11 +68,11 @@ def eval_expr(node: Node, env: Environment) -> Value:
         operand = eval_expr(operand_node, env)
         if op == "-":
             if isinstance(operand, bool) or not isinstance(operand, (int, float)):
-                raise QuantLangValueError(f"unary '-' requires a number, got {operand!r}")
+                raise QubitValueError(f"unary '-' requires a number, got {operand!r}")
             return -operand
         if op == "!":
             return not truthy(operand)
-        raise QuantLangValueError(f"unknown unary operator: {op!r}")
+        raise QubitValueError(f"unknown unary operator: {op!r}")
 
     if tag == "and":
         _, left_node, right_node = node
@@ -94,7 +94,7 @@ def eval_expr(node: Node, env: Environment) -> Value:
     if tag == "call":
         return _eval_call(node, env)
 
-    raise QuantLangValueError(f"unknown expression node: {tag!r}")
+    raise QubitValueError(f"unknown expression node: {tag!r}")
 
 
 def _eval_binop(node: Node, env: Environment) -> Value:
@@ -118,27 +118,27 @@ def _eval_binop(node: Node, env: Environment) -> Value:
     if op == "/":
         left, right = promote_numeric(left, right)
         if right == 0:
-            raise QuantLangValueError("division by zero")
+            raise QubitValueError("division by zero")
         return left / right
 
     if op == "%":
         left, right = promote_numeric(left, right)
         if right == 0:
-            raise QuantLangValueError("modulo by zero")
+            raise QubitValueError("modulo by zero")
         return left % right
 
-    raise QuantLangValueError(f"unknown binary operator: {op!r}")
+    raise QubitValueError(f"unknown binary operator: {op!r}")
 
 
 def _eval_call(node: Node, env: Environment) -> Value:
     _, callee_node, arg_nodes = node
     callee = eval_expr(callee_node, env)
     if not isinstance(callee, Closure):
-        raise QuantLangValueError(f"cannot call non-function value: {callee!r}")
+        raise QubitValueError(f"cannot call non-function value: {callee!r}")
 
     args = [eval_expr(arg, env) for arg in arg_nodes]
     if len(args) != len(callee.params):
-        raise QuantLangValueError(
+        raise QubitValueError(
             f"{callee!r} expects {len(callee.params)} argument(s), got {len(args)}"
         )
 
@@ -211,7 +211,7 @@ def exec_stmt(node: Node, env: Environment) -> None:
         env.define(name, Closure(params=params, body=body, defining_env=env))
         return
 
-    raise QuantLangValueError(f"unknown statement node: {tag!r}")
+    raise QubitValueError(f"unknown statement node: {tag!r}")
 
 
 def _exec_for(node: Node, env: Environment) -> None:

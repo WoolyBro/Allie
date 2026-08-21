@@ -6,10 +6,10 @@ from __future__ import annotations
 
 import pytest
 
-from runtime.environment import Environment
-from runtime.errors import QuantLangValueError
-from runtime.interpreter import eval_expr, exec_stmt
-from runtime.values import Closure
+from qubit.runtime.environment import Environment
+from qubit.runtime.errors import QubitValueError
+from qubit.runtime.interpreter import eval_expr, exec_stmt
+from qubit.runtime.values import Closure
 
 
 def test_arithmetic_precedence() -> None:
@@ -19,8 +19,8 @@ def test_arithmetic_precedence() -> None:
 
 
 def test_string_concatenation() -> None:
-    tree = ("binop", "+", ("str", "hello, "), ("str", "quantlang"))
-    assert eval_expr(tree, Environment()) == "hello, quantlang"
+    tree = ("binop", "+", ("str", "hello, "), ("str", "qubit"))
+    assert eval_expr(tree, Environment()) == "hello, qubit"
 
 
 def test_int_float_promotion() -> None:
@@ -32,7 +32,7 @@ def test_int_float_promotion() -> None:
 
 def test_division_by_zero_raises_custom_error() -> None:
     tree = ("binop", "/", ("num", 1), ("num", 0))
-    with pytest.raises(QuantLangValueError):
+    with pytest.raises(QubitValueError):
         eval_expr(tree, Environment())
 
 
@@ -153,7 +153,7 @@ def test_for_continue_skips_known_iteration() -> None:
 def test_and_short_circuits() -> None:
     env = Environment()
     false_node = ("bool", False)
-    # Would raise QuantLangValueError if evaluated -- proves it never is.
+    # Would raise QubitValueError if evaluated -- proves it never is.
     side_effect_node = ("binop", "/", ("num", 1), ("num", 0))
 
     assert eval_expr(("and", false_node, side_effect_node), env) is False

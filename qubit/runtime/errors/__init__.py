@@ -1,4 +1,4 @@
-"""Runtime error hierarchy — distinct from compiler.errors.
+"""Runtime error hierarchy — distinct from qubit.errors.
 
 Design decision (Phase 0.6): runtime errors raise Python exceptions and
 halt the running strategy, rather than propagating as Result-style
@@ -14,11 +14,11 @@ error proves too coarse for long backtests.
 
 from __future__ import annotations
 
-from compiler.errors import SourceSpan
+from qubit.errors import SourceSpan
 
 
-class QuantLangRuntimeError(Exception):
-    """Base class for all errors raised while executing QuantLang code."""
+class QubitRuntimeError(Exception):
+    """Base class for all errors raised while executing Qubit code."""
 
     def __init__(self, message: str, span: SourceSpan | None = None) -> None:
         super().__init__(message)
@@ -26,13 +26,13 @@ class QuantLangRuntimeError(Exception):
         self.span = span
 
 
-class QuantLangTypeError(QuantLangRuntimeError):
+class QubitTypeError(QubitRuntimeError):
     """Raised when a gradual-typing annotation is violated at runtime."""
 
 
-class QuantLangNameError(QuantLangRuntimeError):
+class QubitNameError(QubitRuntimeError):
     """Raised when an identifier is not bound in the current scope."""
 
 
-class QuantLangValueError(QuantLangRuntimeError):
+class QubitValueError(QubitRuntimeError):
     """Raised for invalid operand values (e.g. division by zero)."""

@@ -2,7 +2,7 @@
 // this file end-to-end (see docs/spec.md). Brace-based syntax, gradual
 // typing, event-driven backtest block.
 
-let greeting: str = "hello, quantlang";
+let greeting: str = "hello, qubit";
 print(greeting);
 
 let prices: Series[float] = load_csv("examples/data/sample_prices.csv", column: "close");

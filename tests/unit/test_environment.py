@@ -1,11 +1,11 @@
-"""Tests for runtime/environment.py (Phase 1.2)."""
+"""Tests for qubit/runtime/environment.py (Phase 1.2)."""
 
 from __future__ import annotations
 
 import pytest
 
-from runtime.environment import Environment
-from runtime.errors import QuantLangNameError
+from qubit.runtime.environment import Environment
+from qubit.runtime.errors import QubitNameError
 
 
 def test_shadowing_child_masks_parent() -> None:
@@ -28,7 +28,7 @@ def test_get_walks_parent_chain() -> None:
 
 def test_get_undefined_raises() -> None:
     env = Environment()
-    with pytest.raises(QuantLangNameError):
+    with pytest.raises(QubitNameError):
         env.get("nonexistent")
 
 
@@ -47,7 +47,7 @@ def test_assign_undefined_raises_without_creating_global() -> None:
     parent = Environment()
     child = Environment(parent=parent)
 
-    with pytest.raises(QuantLangNameError):
+    with pytest.raises(QubitNameError):
         child.assign("never_defined", 1)
 
     assert "never_defined" not in parent.vars

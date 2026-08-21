@@ -1,4 +1,4 @@
-# QuantLang
+# Qubit
 
 A gradually-typed DSL for quantitative trading research, with an
 event-driven backtest engine that structurally prevents look-ahead bias.
@@ -10,9 +10,9 @@ is the north star: every phase should get incrementally closer to running it.
 
 ## Status
 
-Phase 0 (this commit): repo scaffold, CI, diagnostics infrastructure, CLI
-skeleton, and the architectural decisions in `docs/spec.md`. No lexer/parser/
-interpreter yet — that's Phase 1.
+Phase 1 (this commit): a hand-built tree-walking evaluator
+(`qubit.runtime.interpreter`) validated against trees built by hand in
+Python — see `docs/architecture.md`. No lexer/parser yet; that's Phase 2.
 
 ## Setup
 
@@ -24,5 +24,5 @@ uv run pytest
 ## CLI
 
 ```bash
-uv run quantlang run path/to/file.ql [--dump-tokens] [--dump-ast] [--trace]
+uv run qubit run path/to/file.ql [--dump-tokens] [--dump-ast] [--trace]
 ```

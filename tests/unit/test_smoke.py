@@ -1,13 +1,14 @@
 """Phase 0 smoke test: proves the package layout imports cleanly and the
-CLI entry point is wired up. Real lexer/parser/interpreter tests replace
-this once Phase 1 lands."""
+CLI entry point is wired up. Real lexer/parser tests replace this once
+Phase 2 lands (the evaluator itself already has its own tests -- see
+test_phase1_eval.py)."""
 
 from __future__ import annotations
 
 import subprocess
 import sys
 
-from compiler.errors import Diagnostic, DiagnosticBag, Severity, SourceSpan
+from qubit.errors import Diagnostic, DiagnosticBag, Severity, SourceSpan
 
 
 def test_diagnostic_bag_collects_multiple_errors() -> None:
@@ -34,10 +35,10 @@ def test_diagnostic_render_includes_caret() -> None:
 
 def test_cli_help_runs() -> None:
     result = subprocess.run(
-        [sys.executable, "-m", "quantlang", "--help"],
+        [sys.executable, "-m", "qubit", "--help"],
         capture_output=True,
         text=True,
         timeout=10,
     )
     assert result.returncode == 0
-    assert "quantlang" in result.stdout.lower()
+    assert "qubit" in result.stdout.lower()

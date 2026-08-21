@@ -56,7 +56,7 @@ class DiagnosticBag:
     """Accumulates diagnostics across a compilation pass.
 
     Callers (lexer/parser/semantic) push diagnostics here instead of
-    raising, so a single `quantlang run` invocation can report every
+    raising, so a single `qubit run` invocation can report every
     problem it finds rather than stopping at the first one.
     """
 

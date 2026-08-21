@@ -1,8 +1,8 @@
-"""Command-line entry point for QuantLang.
+"""Command-line entry point for Qubit.
 
 Phase 0: wires up the argument surface and debug flags the lexer/parser
 phases will need (--dump-tokens, --dump-ast, --trace). The actual
-lex -> parse -> run pipeline is stubbed until Phase 1+ land.
+lex -> parse -> run pipeline is stubbed until Phase 2 lands.
 """
 
 from __future__ import annotations
@@ -11,13 +11,11 @@ import argparse
 import sys
 from pathlib import Path
 
-from compiler.errors import DiagnosticBag
+from qubit.errors import DiagnosticBag
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="quantlang", description="QuantLang compiler/interpreter CLI"
-    )
+    parser = argparse.ArgumentParser(prog="qubit", description="Qubit compiler/interpreter CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     run = subparsers.add_parser("run", help="Run a .ql source file")
@@ -38,18 +36,18 @@ def run_command(args: argparse.Namespace) -> int:
     source = source_path.read_text(encoding="utf-8")
     diagnostics = DiagnosticBag()
 
-    # Phase 0 stub: lexer/parser/interpreter land in later phases.
-    # This wiring exists now so --dump-tokens / --dump-ast / --trace
-    # have a stable CLI surface to attach to as each phase lands.
+    # Phase 0 stub: lexer/parser land in Phase 2. The evaluator itself
+    # exists (qubit.runtime.interpreter, Phase 1) but has nothing to run
+    # until the parser can produce trees for it.
     if args.dump_tokens:
-        print("(lexer not implemented yet - Phase 1)")
+        print("(lexer not implemented yet - Phase 2)")
         return 0
     if args.dump_ast:
-        print("(parser not implemented yet - Phase 1)")
+        print("(parser not implemented yet - Phase 2)")
         return 0
 
     print(
-        f"(interpreter not implemented yet - Phase 1+) "
+        f"(lexer/parser not implemented yet - Phase 2) "
         f"read {len(source)} bytes from {source_path}"
     )
     diagnostics.print_all()

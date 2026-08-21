@@ -1,5 +1,5 @@
 [project]
-name = "quantlang"
+name = "qubit"
 version = "0.1.0"
 description = "A gradually-typed DSL for quantitative trading research, with first-class backtesting semantics."
 readme = "README.md"
@@ -12,7 +12,7 @@ dependencies = [
 ]
 
 [project.scripts]
-quantlang = "quantlang.cli:main"
+qubit = "qubit.cli:main"
 
 [dependency-groups]
 dev = [
@@ -28,26 +28,25 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 packages = [
-    "quantlang",
-    "compiler",
-    "compiler.lexer",
-    "compiler.parser",
-    "compiler.ast",
-    "compiler.semantic",
-    "compiler.typechecker",
-    "compiler.ir",
-    "compiler.optimizer",
-    "compiler.codegen",
-    "runtime",
-    "runtime.interpreter",
-    "runtime.values",
-    "runtime.errors",
-    "stdlib",
-    "quant",
-    "quant.types",
-    "quant.indicators",
-    "quant.backtest",
-    "quant.stats",
+    "qubit",
+    "qubit.lexer",
+    "qubit.parser",
+    "qubit.ast",
+    "qubit.semantic",
+    "qubit.typechecker",
+    "qubit.ir",
+    "qubit.optimizer",
+    "qubit.codegen",
+    "qubit.runtime",
+    "qubit.runtime.interpreter",
+    "qubit.runtime.values",
+    "qubit.runtime.errors",
+    "qubit.stdlib",
+    "qubit.quant",
+    "qubit.quant.types",
+    "qubit.quant.indicators",
+    "qubit.quant.backtest",
+    "qubit.quant.stats",
 ]
 
 [tool.pytest.ini_options]
@@ -78,5 +77,5 @@ exclude = ["tests/", "benchmarks/", "examples/"]
 # docs/architecture.md), so every node[i] access is legitimately Any --
 # warn_return_any would fire on nearly every return in this module. Revisit
 # once Phase 2 replaces hand-built tuples with a typed AST.
-module = "runtime.interpreter"
+module = "qubit.runtime.interpreter"
 warn_return_any = false

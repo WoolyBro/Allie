@@ -9,52 +9,56 @@ stage is actually implemented, not speculatively ahead of it.
 source (.ql)
     │
     ▼
-  Lexer            compiler/lexer      — not yet implemented (Phase 2)
+  Lexer            qubit/lexer         — not yet implemented (Phase 2)
     │
     ▼
-  Parser           compiler/parser     — not yet implemented (Phase 2)
+  Parser           qubit/parser        — not yet implemented (Phase 2)
     │
     ▼
-  AST              compiler/ast        — not yet implemented (Phase 2)
+  AST              qubit/ast           — not yet implemented (Phase 2)
     │
     ▼
-  Semantic/        compiler/semantic,  — not yet implemented (Phase 3+)
-  gradual typing   compiler/typechecker
+  Semantic/        qubit/semantic,     — not yet implemented (Phase 3+)
+  gradual typing   qubit/typechecker
     │
     ▼
-  Interpreter      runtime/interpreter — Phase 1: hand-built trees only,
-                                          no lexer/parser feeding it yet
+  Interpreter      qubit/runtime/interpreter — Phase 1: hand-built trees
+                                                only, no lexer/parser
+                                                feeding it yet
     │
     ▼
-  (values)         runtime/values, runtime/environment
+  (values)         qubit/runtime/values, qubit/runtime/environment
 ```
 
-`compiler/ir`, `compiler/optimizer`, and `compiler/codegen/{llvm_lowering,jit}`
-are aspirational placeholders for a possible future execution backend — see
+`qubit/ir`, `qubit/optimizer`, and `qubit/codegen/{llvm_lowering,jit}` are
+aspirational placeholders for a possible future execution backend — see
 `docs/spec.md` "Considered alternatives". Nothing executes through them yet;
 the interpreter runs directly off the AST (and, for now, off hand-built
 Python tuples standing in for the AST).
 
 ## Phase 1 — hand-built evaluator
 
-No lexer or parser exists yet. `runtime/interpreter` evaluates trees built
-by hand in Python as tuples (`('binop', '+', ('num', 1), ('num', 2))`), so
-the evaluation semantics can be gotten right and tested in isolation before
-a real parser has to produce trees in this same shape. The parser (Phase 2)
-targets this exact node shape — this evaluator does not change when it lands.
+No lexer or parser exists yet. `qubit.runtime.interpreter` evaluates trees
+built by hand in Python as tuples (`('binop', '+', ('num', 1), ('num', 2))`),
+so the evaluation semantics can be gotten right and tested in isolation
+before a real parser has to produce trees in this same shape. The parser
+(Phase 2) targets this exact node shape — this evaluator does not change
+when it lands.
 
 **Values.** Represented as raw Python `int` / `float` / `bool` / `str` — no
-wrapper class yet (`runtime/values.py`). A `Closure` value (params, body,
-defining environment) is the only structured value so far, for functions.
+wrapper class yet (`qubit/runtime/values/__init__.py`). A `Closure` value
+(params, body, defining environment) is the only structured value so far,
+for functions.
 
 **Numeric promotion.** `int op float -> float`. Booleans and strings are
 left alone by promotion (`+` on two strings concatenates instead).
 
-**Scoping.** `runtime/environment.py`'s `Environment` is a parent-linked
-chain of `dict`s. `define()` introduces a binding in the *current* frame
-(enabling shadowing); `assign()` walks up to find an *existing* binding and
-mutates it in place, raising rather than silently creating a new global.
-Every `{ ... }` block gets its own child `Environment`.
+**Scoping.** `qubit/runtime/environment.py`'s `Environment` is a
+parent-linked chain of `dict`s. `define()` introduces a binding in the
+*current* frame (enabling shadowing); `assign()` walks up to find an
+*existing* binding and mutates it in place, raising rather than silently
+creating a new global. Every `{ ... }` block gets its own child
+`Environment`.
 
 **Control flow.** `break`/`continue`/`return` are implemented as internal
 exceptions (`BreakSignal`/`ContinueSignal`/`ReturnSignal`) raised by their
@@ -72,7 +76,8 @@ snapshot of its values at definition time. A closure's captured variables
 reflect later mutations to that environment (proven in
 `tests/unit/test_phase1_eval.py`).
 
-**Runtime errors.** Division/modulo by zero raise `runtime.errors.
-QuantLangValueError`, not a bare Python `ZeroDivisionError` — user-facing
-errors go through the `runtime.errors` hierarchy, never a leaked builtin
-exception (see `docs/spec.md` "Runtime error philosophy").
+**Runtime errors.** Division/modulo by zero raise
+`qubit.runtime.errors.QubitValueError`, not a bare Python
+`ZeroDivisionError` — user-facing errors go through the
+`qubit.runtime.errors` hierarchy, never a leaked builtin exception (see
+`docs/spec.md` "Runtime error philosophy").
