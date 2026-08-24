@@ -53,7 +53,7 @@ from allie.ast.nodes import (
     WhenClause,
     WhileStmt,
 )
-from allie.errors import DiagnosticBag
+from allie.errors import DiagnosticBag, SourceSpan
 
 
 class Scope:
@@ -115,11 +115,9 @@ class Resolver:
         elif isinstance(stmt, ForStmt):
             self._resolve_for(stmt)
         elif isinstance(stmt, BreakStmt):
-            if self.loop_depth == 0:
-                self.diagnostics.error("'break' outside a loop", stmt.span)
+            self._check_jump_allowed("break", stmt.span)
         elif isinstance(stmt, ContinueStmt):
-            if self.loop_depth == 0:
-                self.diagnostics.error("'continue' outside a loop", stmt.span)
+            self._check_jump_allowed("continue", stmt.span)
         elif isinstance(stmt, ReturnStmt):
             self._resolve_return(stmt)
         elif isinstance(stmt, ImportStmt):
@@ -141,6 +139,28 @@ class Resolver:
         else:
             raise TypeError(f"resolver: unhandled statement node {type(stmt).__name__}")
 
+    def _check_jump_allowed(self, keyword: str, span: SourceSpan) -> None:
+        """`break`/`continue` need an enclosing loop *in the same
+        execution context*. `loop_depth` is reset to 0 when entering a
+        function body or a `when` action (see `_resolve_function` /
+        `_resolve_when_clause`), so a jump that would have to cross
+        either boundary reports here rather than silently binding to a
+        lexically-enclosing loop it could never actually reach at
+        runtime. `inside_when` only selects the more specific wording --
+        it is NOT what does the rejecting, and it deliberately does not
+        subsume `loop_depth`: a loop written *inside* a `when` action is
+        a perfectly valid jump target."""
+        if self.loop_depth > 0:
+            return
+        if self.inside_when:
+            self.diagnostics.error(
+                f"'{keyword}' inside a 'when' action must target a loop within that action "
+                "(a 'when' action runs per-bar; it cannot jump out to an enclosing loop)",
+                span,
+            )
+        else:
+            self.diagnostics.error(f"'{keyword}' outside a loop", span)
+
     def _resolve_for(self, stmt: ForStmt) -> None:
         self._push_scope()
         self._resolve_stmt(stmt.initializer)
@@ -153,12 +173,17 @@ class Resolver:
 
     def _resolve_function(self, decl: FuncDecl) -> None:
         was_inside_function = self.inside_function
+        # A function body is its own execution context: a `break` here
+        # cannot target a loop that lexically encloses the *declaration*.
+        saved_loop_depth = self.loop_depth
         self.inside_function = True
+        self.loop_depth = 0
         self._push_scope()
         for param in decl.params:
             self.scope.declare(param.name)
         self._resolve_stmt(decl.body)
         self._pop_scope()
+        self.loop_depth = saved_loop_depth
         self.inside_function = was_inside_function
 
     def _resolve_return(self, stmt: ReturnStmt) -> None:
@@ -181,8 +206,15 @@ class Resolver:
         self._resolve_expr(clause.left)
         self._resolve_expr(clause.right)
         was_inside_when = self.inside_when
+        # Same reasoning as _resolve_function: a `when` action is a
+        # per-bar callback the backtest engine invokes, so a loop
+        # enclosing the *strategy declaration* is not a reachable jump
+        # target from inside the action.
+        saved_loop_depth = self.loop_depth
         self.inside_when = True
+        self.loop_depth = 0
         self._resolve_stmt(clause.body)
+        self.loop_depth = saved_loop_depth
         self.inside_when = was_inside_when
 
     # ---- expressions ----

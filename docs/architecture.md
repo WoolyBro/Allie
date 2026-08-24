@@ -179,3 +179,91 @@ script and keeps its tree-walking default so nothing already written
 against it breaks. `--debug-ir` prints the Allie IR and the final LLVM IR
 as two clearly labeled sections. All flags are independent and
 combinable.
+
+## Phase 7 — Backtesting DSL
+
+`strategy` / `when` / `backtest` execute for real. All three backends
+funnel into one entry point, `allie.quant.backtest_engine.run_backtest`,
+so no backend can drift into its own accounting — verified in
+`tests/unit/test_backtest_cross_validation.py`, which asserts byte-identical
+results tables from the tree-walking interpreter, the IR interpreter, and
+the LLVM/JIT backend.
+
+### How `when` clauses drive trades
+
+The spec described the engine in operator terms ("on `crosses_above`
+true and flat → enter long"). What's implemented is one level more
+general: each `when` clause contributes a boolean signal series plus an
+*action* (its body), and on each bar every clause whose signal is True
+runs its action. The `buy()`/`sell()` builtins called inside that action
+are what actually move the position.
+
+For the canonical crossover strategy this is exactly the specced
+behavior, but it avoids parsing, resolving, and type-checking a clause
+body only to then ignore it — and it makes `buy()`/`sell()` real
+builtins rather than decorative ones.
+
+### Position and accounting model (v1)
+
+Flat-or-long, all-in, no shorting or leverage. `buy()` while already
+long and `sell()` while flat are no-ops, not errors — a crossing firing
+twice before the opposite signal is normal. Equity marks to market every
+bar, not just on trade bars. **Risk-free rate is 0** for the Sharpe
+ratio, stated explicitly since "Sharpe" alone doesn't say which
+convention is in use. An entry still open at the final bar is marked to
+market but not counted as a trade — it has no realized result yet.
+
+### `Series<Bool>` is a distinct runtime type
+
+`crosses_above`/`crosses_below` return `BoolSeriesValue`, not a
+float64 `SeriesValue` holding 1.0/0.0. `SeriesValue` enforces float64 by
+construction, so a boolean series stored there would either break that
+invariant or silently become numeric data that `mean`/`SMA` would
+happily — and meaninglessly — accept.
+
+### `when` does not accept arbitrary boolean expressions
+
+Decided explicitly rather than left open. The committed grammar
+(`whenClause → "when" expression (crosses_above|crosses_below)
+expression ":" statement`) *requires* a crossing operator, so supporting
+a bare `Bool` would mean a real grammar/parser/lowering change — and an
+arbitrary `Bool` has no natural long/flat interpretation without extra
+syntax distinguishing entry from exit. Not in v1.
+
+### Two jump-boundary bugs found by checking a cross-reference claim
+
+Phase 7.1 asked to "confirm both flags are still distinct and neither
+accidentally subsumes the other". Confirming revealed `inside_when` was
+**set but never read** — so `break`/`continue` inside a `when` action
+could bind to a loop enclosing the *strategy declaration*, which the
+per-bar callback can never actually reach at runtime. The same class of
+bug existed for function bodies (`loop_depth` wasn't reset on entry).
+Both now reset `loop_depth` at the boundary; `inside_when` only selects
+the more specific error wording, and deliberately does not subsume
+`loop_depth` — a loop written *inside* a `when` action is still a valid
+jump target.
+
+### The Phase 5.2 IR lowering for these constructs was rewritten
+
+It was written while `strategy`/`when`/`backtest` were always-raising
+stubs, and was structurally unable to express them: a nameless
+`__strategy_declare`, each `when` body lowered *inline and
+unconditionally* (running in sequence rather than when its signal
+fired), and raw strategy/symbol strings passed in an argument list the
+interpreter reads as register names. Nothing caught it because the
+constructs never executed.
+
+Each `when` body is now its own zero-argument IRProgram — the same
+mechanism `FuncDecl` uses — registered in `functions`/`function_info`,
+which is what lets the LLVM backend declare and compile them with no
+special-casing. `allie.quant.backtest_engine` holds a dispatch table
+mapping body names to zero-argument callables; the IR interpreter fills
+it with closures over `run_ir_program`, and the JIT fills it with ctypes
+wrappers around compiled function addresses (obtainable only after
+`finalize_object()`). The engine just calls them.
+
+**One documented semantic difference**: the IR/LLVM paths evaluate
+clause operands at the *declaration* site, while the tree walker defers
+them to the `backtest` statement. For any program that computes its
+indicators before declaring the strategy — every realistic one, and
+every one in the test suite — both give identical results.

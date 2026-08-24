@@ -217,3 +217,40 @@ tree-walking interpreter; `main.py` defaults to LLVM/JIT.
 **Also fixed, pre-existing:** the type checker rejected `+` on two `String`s, even though both interpreters have always concatenated them correctly — a real checker/interpreter gap, invisible until something ran typed string concatenation through the full pipeline for the first time. Regression tests added for both the fix and the still-rejected `"a" + 1` case.
 
 365+ tests total, ruff + mypy clean.
+
+## Phase 7 — Backtesting DSL (done)
+
+### 7.1 Grammar/parser/AST — cross-reference confirmed
+
+- [x] Confirmed rather than assumed: `strategyDecl`/`whenClause`/`backtestStmt` productions, AST nodes, parser methods, and the `strategy/when/crosses_above/crosses_below/backtest/on/from/to` keywords all landed in Phase 2. Confirmed `buy`/`sell` are **not** lexer keywords in this repo — they're ordinary registered builtins resolved like `print`/`load`, so they need no parser, lowering, or codegen support of their own.
+
+### 7.2 Type checking
+
+- [x] `WhenClause` operands requiring `Series<Float>`: confirmed fully live (wired in Phase 4.1), not still a TODO.
+- [x] **Decision made explicitly**: `when` does *not* accept arbitrary boolean expressions in v1. The grammar requires a crossing operator, and a bare `Bool` has no natural long/flat meaning without extra entry/exit syntax. Documented in `docs/architecture.md`.
+- [x] `buy()`/`sell()` registered as zero-arg builtins (`allie/stdlib/trading_fns.py`), rejected at runtime outside a running strategy.
+- [x] `BacktestStmt` strategy-name resolution — Phase 3.2's remaining stub, now wired through the ordinary `TypeEnvironment` lookup (new `StrategyType`), plus a check that `on SYM` names a `PriceSeries`.
+
+### 7.3 Crossing operators
+
+- [x] `crosses_above`/`crosses_below` in `allie/stdlib/series_ops.py`, registered in the same registry as everything else. New `BoolSeriesValue` runtime type — `SeriesValue` is float64-by-construction, so a boolean series can't live there without breaking that invariant or becoming meaningless numeric data.
+- [x] 10 tests, including the specced single-known-crossover case, equality-vs-strict-inequality edges, and that SMA's NaN warmup produces no spurious signals.
+
+### 7.4 Backtest engine
+
+- [x] `allie/quant/backtest_engine.py`: bar-by-bar driver, flat/long all-in position model, equity curve marked to market every bar, CAGR/volatility/Sharpe/max-drawdown/trade-count, fixed-width results table.
+- [x] **All three execution paths wired to one entry point** (`run_backtest`) — the tree-walking interpreter's Phase 2.6 stubs replaced with real handlers, and the IR/JIT paths routed through the same function.
+
+### 7.5 Tests
+
+- [x] `test_backtest_engine.py` (13): hand-computed equity curve and every metric for one engineered trade; no-op/edge behaviors; slicing realignment.
+- [x] `test_backtest_cross_validation.py` (16): the `MovingAverage` example end-to-end with bounded metric assertions, **three-backend agreement on the quant DSL** (the first time Phase 6.5's standard is applied beyond scalar/loop programs), and the Phase 2.5 semantic rules re-checked against the fully wired pipeline.
+- [x] `examples/moving_average.qs` — verified byte-identical output across all three backends.
+
+### Three real bugs found by checking claims instead of assuming them
+
+1. **`inside_when` was set but never read.** Phase 7.1 asked to confirm the flag was distinct and not subsumed; confirming showed it enforced nothing, so `break`/`continue` in a `when` action could bind to a loop enclosing the strategy declaration — unreachable from a per-bar callback.
+2. **Same bug for function bodies** — `loop_depth` wasn't reset on entry, so `while true { func f() { break; } }` passed. Found while fixing #1.
+3. **The Phase 5.2 IR lowering for `strategy`/`when`/`backtest` was structurally broken** — nameless declare call, `when` bodies lowered inline and unconditionally, and raw strings passed where register names were expected. Invisible because these constructs were always-raising stubs until now. Rewritten: each body is its own zero-arg IRProgram, invoked through a dispatch table both the IR interpreter and the JIT fill.
+
+428 tests, ruff + mypy clean.

@@ -226,7 +226,7 @@ def test_call_through_non_identifier_callee_raises() -> None:
 
 
 def test_strategy_and_backtest_lower_to_calls_not_inlined_control_flow() -> None:
-    main, _ = _lower(
+    main, functions = _lower(
         """
         strategy S {
             when a crosses_above b: buy();
@@ -236,7 +236,7 @@ def test_strategy_and_backtest_lower_to_calls_not_inlined_control_flow() -> None
     )
     call_names = [i.fn_name for i in main.instructions if isinstance(i, Call)]
     assert "__strategy_declare" in call_names
-    assert any(name.startswith("__when_") for name in call_names)
+    assert "__strategy_clause" in call_names
     assert "__backtest_run" in call_names
     # Confirms 5.1's "no new instruction types for strategy/when/backtest"
     # claim: nothing beyond Call/LoadConst/LoadVar (loading `a`/`b`/the
@@ -244,6 +244,46 @@ def test_strategy_and_backtest_lower_to_calls_not_inlined_control_flow() -> None
     # strategy/when/backtest instruction was needed.
     kinds = {type(i).__name__ for i in main.instructions}
     assert kinds <= {"Call", "LoadConst", "LoadVar"}
+
+
+def test_when_body_lowers_to_a_separate_callable_program_not_inline() -> None:
+    # Phase 7 rewrite: the Phase 5.2 lowering emitted the `when` body
+    # inline, so it ran unconditionally in sequence instead of per-bar
+    # when its signal fired. Each body is now its own zero-arg program,
+    # registered like an ordinary function so the engine (and the LLVM
+    # backend) can invoke it.
+    main, functions = _lower(
+        """
+        strategy S {
+            when a crosses_above b: buy();
+            when a crosses_below b: sell();
+        }
+        """
+    )
+    assert "__when_body_S_0" in functions
+    assert "__when_body_S_1" in functions
+
+    # The bodies' calls live in the body programs, NOT in main.
+    main_calls = {i.fn_name for i in main.instructions if isinstance(i, Call)}
+    assert "buy" not in main_calls
+    assert "sell" not in main_calls
+
+    body0, params0 = functions["__when_body_S_0"]
+    assert params0 == []
+    assert any(isinstance(i, Call) and i.fn_name == "buy" for i in body0.instructions)
+
+
+def test_backtest_passes_prices_as_a_value_not_a_name() -> None:
+    # The LLVM bridge can't look a variable up by name, so the symbol is
+    # loaded into a register and passed as a value. (The Phase 5.2
+    # version put the raw strings in the arg list, which the IR
+    # interpreter would have read as register names.)
+    main, _ = _lower("backtest S on AAPL from 0 to 1;")
+    load = next(i for i in main.instructions if isinstance(i, LoadVar) and i.name == "AAPL")
+    call = next(i for i in main.instructions if isinstance(i, Call))
+    assert call.fn_name == "__backtest_run"
+    assert load.dest in call.args
+    assert "AAPL" not in call.args  # a name, not a register, must not appear
 
 
 def test_assignment_expression_returns_the_assigned_value_register() -> None:

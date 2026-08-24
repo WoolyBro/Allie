@@ -40,6 +40,12 @@ from allie.ir.instructions import (
     StoreVar,
     UnaryOp,
 )
+from allie.quant.backtest_engine import (
+    add_strategy_clause,
+    declare_strategy,
+    register_when_body,
+    run_registered_backtest,
+)
 from allie.runtime.environment import Environment
 from allie.runtime.errors import AllieValueError
 from allie.runtime.values import PriceSeriesValue, Value, promote_numeric
@@ -116,6 +122,7 @@ def run_ir_program(
     first Return instruction reached, or None if execution falls off
     the end of the list."""
     builtins = builtins if builtins is not None else {}
+    _register_when_bodies(env, functions, builtins)
     instructions = program.instructions
     label_index = {
         instr.name: i for i, instr in enumerate(instructions) if isinstance(instr, Label)
@@ -178,6 +185,23 @@ def run_ir_program(
     return None
 
 
+def _register_when_bodies(env: Environment, functions: Functions, builtins: Builtins) -> None:
+    """Publishes every lowered `when` body as a zero-argument callable
+    the backtest engine can invoke per-bar. The LLVM backend does the
+    same thing with JIT'd function addresses (see
+    allie.codegen.jit.compile_and_run) -- both fill the one dispatch
+    table in allie.quant.backtest_engine, so neither needs an engine of
+    its own."""
+    for name, (body_program, _params) in functions.items():
+        if not name.startswith("__when_body_"):
+            continue
+
+        def action(prog: IRProgram = body_program) -> None:
+            run_ir_program(prog, Environment(parent=env), functions, builtins)
+
+        register_when_body(name, action)
+
+
 def _exec_call(
     instr: Call, registers: dict[str, Value], functions: Functions, builtins: Builtins
 ) -> Value:
@@ -185,12 +209,15 @@ def _exec_call(
 
     if instr.fn_name == "__make_series":
         return _SeriesValue(np.array(args, dtype=np.float64))
-    if instr.fn_name in ("__strategy_declare", "__backtest_run") or instr.fn_name.startswith(
-        "__when_"
-    ):
-        raise AllieValueError(
-            f"{instr.fn_name}: strategy/backtest execution is not implemented yet (Phase 7)"
-        )
+    if instr.fn_name == "__strategy_declare":
+        declare_strategy(args[0])  # type: ignore[arg-type]
+        return None
+    if instr.fn_name == "__strategy_clause":
+        add_strategy_clause(args[0], args[1], args[2])  # type: ignore[arg-type]
+        return None
+    if instr.fn_name == "__backtest_run":
+        run_registered_backtest(args[0], args[1], args[2], args[3])  # type: ignore[arg-type]
+        return None
     if instr.fn_name in functions:
         fn_program, fn_params = functions[instr.fn_name]
         if len(args) != len(fn_params):

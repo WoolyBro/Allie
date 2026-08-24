@@ -21,6 +21,7 @@ Interpreter so runs are isolated (docs/spec.md "Concurrency model").
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import numpy as np
@@ -52,18 +53,23 @@ from allie.ast.nodes import (
     StrategyDecl,
     StringLiteral,
     Unary,
+    WhenClause,
     WhileStmt,
 )
+from allie.quant.backtest_engine import WhenSignal, run_backtest
 from allie.runtime.environment import Environment
 from allie.runtime.errors import AllieValueError
 from allie.runtime.values import (
+    BoolSeriesValue,
     BuiltinFunction,
     Closure,
     PriceSeriesValue,
     SeriesValue,
+    StrategyValue,
     Value,
     promote_numeric,
 )
+from allie.stdlib.series_ops import crosses_above, crosses_below
 
 _COMPARISON_OPS: dict[str, Any] = {
     "==": lambda a, b: a == b,
@@ -279,14 +285,73 @@ def exec_stmt(node: Stmt, env: Environment) -> None:
         return
 
     if isinstance(node, StrategyDecl):
-        raise AllieValueError(
-            "strategy declarations are not executable yet (backtest engine lands in Phase 7)"
+        # Declaration binds a value; the clause operands aren't evaluated
+        # until a `backtest` statement actually runs (see StrategyValue).
+        env.define(
+            node.name,
+            StrategyValue(name=node.name, clauses=node.when_clauses, defining_env=env),
         )
+        return
 
     if isinstance(node, BacktestStmt):
-        raise AllieValueError("backtest execution is not implemented yet (Phase 7)")
+        _exec_backtest(node, env)
+        return
 
     raise AllieValueError(f"unknown statement node: {type(node).__name__}")
+
+
+def _exec_backtest(node: BacktestStmt, env: Environment) -> None:
+    """`backtest S on SYM from N to M;` -- resolves both names, computes
+    each `when` clause's signal series, and hands everything to the one
+    shared engine entry point (allie.quant.backtest_engine.run_backtest)
+    that every other backend also calls."""
+    strategy = env.get(node.strategy_name)
+    if not isinstance(strategy, StrategyValue):
+        raise AllieValueError(f"'{node.strategy_name}' is not a strategy")
+
+    # `on SYM` names an ordinary variable holding a PriceSeriesValue --
+    # e.g. `let AAPL = load("...")`. The grammar makes it an IDENTIFIER,
+    # so this is the natural reading and needs no new syntax.
+    prices = env.get(node.symbol)
+    if not isinstance(prices, PriceSeriesValue):
+        raise AllieValueError(
+            f"backtest: '{node.symbol}' must be a PriceSeries (from load(...)), "
+            f"got {type(prices).__name__}"
+        )
+
+    clauses = [
+        WhenSignal(
+            signal=_eval_when_signal(clause, strategy.defining_env),
+            action=_make_when_action(clause, strategy.defining_env),
+        )
+        for clause in strategy.clauses
+    ]
+
+    result = run_backtest(
+        strategy_name=node.strategy_name,
+        symbol=node.symbol,
+        prices=prices,
+        clauses=clauses,
+        start=int(node.start),
+        end=int(node.end),
+    )
+    print(result.render())
+
+
+def _eval_when_signal(clause: WhenClause, env: Environment) -> BoolSeriesValue:
+    left = eval_expr(clause.left, env)
+    right = eval_expr(clause.right, env)
+    if not isinstance(left, SeriesValue) or not isinstance(right, SeriesValue):
+        raise AllieValueError("'when' clause operands must be Series<Float>")
+    crossing = crosses_above if clause.operator == "crosses_above" else crosses_below
+    return crossing(left, right)
+
+
+def _make_when_action(clause: WhenClause, env: Environment) -> Callable[[], None]:
+    def action() -> None:
+        exec_stmt(clause.body, Environment(parent=env))
+
+    return action
 
 
 def _exec_for(node: ForStmt, env: Environment) -> None:

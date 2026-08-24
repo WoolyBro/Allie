@@ -87,6 +87,49 @@ class SeriesValue:
 
 
 @dataclass(eq=False)
+class BoolSeriesValue:
+    """A 1-D boolean series -- the runtime value behind `Series<Bool>`,
+    produced by `crosses_above`/`crosses_below` (Phase 7.3).
+
+    Separate from SeriesValue rather than encoding True/False as
+    1.0/0.0 float64: SeriesValue enforces float64 in `__post_init__` by
+    construction, so a boolean series stored there would either break
+    that invariant or silently become numeric data that `mean`/`SMA`
+    would happily (and meaninglessly) accept. See SeriesValue's
+    docstring for why `eq=False`.
+    """
+
+    data: np.ndarray
+
+    def __post_init__(self) -> None:
+        self.data = np.asarray(self.data, dtype=bool)
+        if self.data.ndim != 1:
+            raise AllieValueError(f"BoolSeriesValue requires a 1D array, got {self.data.ndim}D")
+
+    def __len__(self) -> int:
+        return len(self.data)
+
+
+@dataclass
+class StrategyValue:
+    """A declared `strategy` (Phase 7): its `when` clauses plus the
+    environment they were declared in. Like `Closure`, it captures that
+    environment by reference rather than snapshotting -- the clause
+    operands (`fast`, `slow`, ...) are only evaluated later, when a
+    `backtest` statement actually runs.
+
+    `clauses` holds the AST `WhenClause` nodes; typing it loosely here
+    (`Any`) for the same circular-import reason `Closure.body` is
+    loose -- allie.ast imports nothing from this module, and it must
+    stay that way.
+    """
+
+    name: str
+    clauses: list[Any]
+    defining_env: Environment
+
+
+@dataclass(eq=False)
 class MatrixValue:
     """A 2-D numeric matrix. See SeriesValue's docstring for why
     `eq=False`."""
@@ -127,7 +170,9 @@ Value = (
     | Closure
     | BuiltinFunction
     | SeriesValue
+    | BoolSeriesValue
     | MatrixValue
     | PriceSeriesValue
+    | StrategyValue
     | None
 )

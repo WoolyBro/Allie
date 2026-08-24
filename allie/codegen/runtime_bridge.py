@@ -57,13 +57,16 @@ from typing import Any, TypeVar
 import numpy as np
 
 from allie.ir.interpreter import _apply_binop, _apply_unary
+from allie.quant.backtest_engine import (
+    add_strategy_clause,
+    declare_strategy,
+    run_registered_backtest,
+)
 from allie.runtime.errors import AllieValueError
 from allie.runtime.values import PriceSeriesValue, SeriesValue
 from allie.stdlib.registry import BUILTINS
 
 _PRICE_SERIES_FIELDS = ("open", "high", "low", "close", "volume", "dates")
-
-_STRATEGY_BACKTEST_NAMES = frozenset({"__strategy_declare", "__backtest_run"})
 
 _BOXED: dict[int, Any] = {}
 
@@ -160,8 +163,10 @@ def call_builtin_bridge(
     name_handle: int, arg0: int, arg1: int, arg2: int, arg3: int, argc: int
 ) -> int:
     """One generic entry point for every fixed-arity bridged `Call` --
-    stdlib builtins and `__strategy_declare`/`__backtest_run`/`__when_*`
-    (Phase 7 stubs). `__make_series` is NOT dispatched here -- array
+    stdlib builtins plus the three backtest-DSL calls
+    (`__strategy_declare`/`__strategy_clause`/`__backtest_run`), which
+    route into the same `allie.quant.backtest_engine` the tree-walking
+    and IR paths use. `__make_series` is NOT dispatched here -- array
     literals can have arbitrarily many elements, more than this fixed
     4-argument signature allows, so it gets its own variable-arity
     `make_series_bridge` below."""
@@ -169,10 +174,15 @@ def call_builtin_bridge(
     handles = [arg0, arg1, arg2, arg3][:argc]
     args = [unbox(h) for h in handles]
 
-    if name in _STRATEGY_BACKTEST_NAMES or name.startswith("__when_"):
-        raise AllieValueError(
-            f"{name}: strategy/backtest execution is not implemented yet (Phase 7)"
-        )
+    if name == "__strategy_declare":
+        declare_strategy(args[0])
+        return 0
+    if name == "__strategy_clause":
+        add_strategy_clause(args[0], args[1], args[2])
+        return 0
+    if name == "__backtest_run":
+        run_registered_backtest(args[0], args[1], args[2], args[3])
+        return 0
     if name not in BUILTINS:
         raise AllieValueError(f"cannot call undefined function '{name}'")
     _, fn = BUILTINS[name]

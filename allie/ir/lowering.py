@@ -115,10 +115,21 @@ from allie.ir.instructions import (
     StoreVar,
     UnaryOp,
 )
-from allie.typechecker.types import BOOL, Type, resolve_base_type, resolve_generic_type
+from allie.typechecker.types import (
+    BOOL,
+    FLOAT,
+    INT,
+    PRICE_SERIES,
+    STRING,
+    VOID,
+    Type,
+    resolve_base_type,
+    resolve_generic_type,
+)
 
 MAKE_SERIES_FN = "__make_series"
 STRATEGY_DECLARE_FN = "__strategy_declare"
+STRATEGY_CLAUSE_FN = "__strategy_clause"
 BACKTEST_RUN_FN = "__backtest_run"
 
 
@@ -305,31 +316,97 @@ class IRLowering:
         )
 
     def _lower_strategy(self, stmt: StrategyDecl) -> None:
-        # Lowered as Calls into the runtime backtest engine (Phase 7) --
-        # the engine's bar-by-bar iteration stays entirely outside the
-        # IR's own control-flow machinery; it's invoked, not inlined.
-        self._emit(Call(dest=None, fn_name=STRATEGY_DECLARE_FN, args=[]))
-        for clause in stmt.when_clauses:
-            self._lower_when_clause(clause)
+        """Lowered as `Call`s into the runtime backtest engine -- its
+        bar-by-bar iteration stays entirely outside the IR's own
+        control-flow machinery; it's invoked, not inlined.
 
-    def _lower_when_clause(self, clause: WhenClause) -> None:
+        **Rewritten in Phase 7.** The Phase 5.2 version was written
+        while these constructs were always-raising stubs, and was
+        structurally unable to express them: it emitted a nameless
+        `__strategy_declare`, lowered each `when` body *inline and
+        unconditionally* (so the body ran in sequence rather than when
+        its signal fired), and passed raw strategy/symbol *strings* in
+        an argument list the interpreter reads as register names.
+        Nothing caught it because the constructs never executed.
+
+        Each `when` body now becomes its own zero-argument IRProgram --
+        the same mechanism `FuncDecl` already uses -- so the engine can
+        invoke it per-bar. Body programs are named `__when_body_<n>` and
+        registered in `functions`/`function_info` alongside ordinary
+        user functions, which is what lets the LLVM backend declare and
+        compile them with no special-casing.
+
+        **Documented semantic difference from the tree-walking
+        interpreter**: clause operands (`fast`, `slow`) are evaluated
+        here, at the *declaration* site, whereas the tree walker defers
+        them to the `backtest` statement (allie.runtime.values.
+        StrategyValue captures its environment by reference). For any
+        program that computes its indicators before declaring the
+        strategy -- which is every realistic one, and every one in the
+        test suite -- both give identical results.
+        """
+        name_reg = self._const(stmt.name)
+        self._emit(Call(dest=None, fn_name=STRATEGY_DECLARE_FN, args=[name_reg]))
+        for index, clause in enumerate(stmt.when_clauses):
+            self._lower_when_clause(stmt.name, index, clause)
+
+    def _lower_when_clause(self, strategy_name: str, index: int, clause: WhenClause) -> None:
+        body_fn = f"__when_body_{strategy_name}_{index}"
+
+        sub_lowering = IRLowering(
+            functions=self.functions,
+            registers=RegisterAllocator(),
+            function_info=self.function_info,
+        )
+        sub_lowering._lower_stmt(clause.body)
+        self.functions[body_fn] = (IRProgram(instructions=sub_lowering.instructions), [])
+        self.function_info[body_fn] = FunctionInfo(
+            param_types=[],
+            return_type=VOID,
+            register_types=sub_lowering.register_types,
+        )
+
+        # One packed spec constant rather than three separate arguments:
+        # the LLVM bridge takes a fixed 4 arguments, and (spec, left,
+        # right) fits where (strategy, operator, body_fn, left, right)
+        # would not.
+        spec_reg = self._const(f"{strategy_name}|{clause.operator}|{body_fn}")
         left = self._lower_expr(clause.left)
         right = self._lower_expr(clause.right)
-        self._emit(Call(dest=None, fn_name=f"__when_{clause.operator}", args=[left, right]))
-        self._lower_stmt(clause.body)
+        self._emit(Call(dest=None, fn_name=STRATEGY_CLAUSE_FN, args=[spec_reg, left, right]))
 
     def _lower_backtest(self, stmt: BacktestStmt) -> None:
-        start_reg = self.registers.new_reg()
-        self._emit(LoadConst(dest=start_reg, value=stmt.start))
-        end_reg = self.registers.new_reg()
-        self._emit(LoadConst(dest=end_reg, value=stmt.end))
+        # `on SYM` names an ordinary variable holding a PriceSeries, so
+        # it's loaded as a value rather than passed as a name -- the
+        # LLVM bridge has no way to look a variable up by name.
+        spec_reg = self._const(f"{stmt.strategy_name}|{stmt.symbol}")
+        prices_reg = self.registers.new_reg()
+        self._emit(LoadVar(dest=prices_reg, name=stmt.symbol))
+        self.register_types[prices_reg] = PRICE_SERIES
+        start_reg = self._const(stmt.start)
+        end_reg = self._const(stmt.end)
         self._emit(
             Call(
                 dest=None,
                 fn_name=BACKTEST_RUN_FN,
-                args=[stmt.strategy_name, stmt.symbol, start_reg, end_reg],
+                args=[spec_reg, prices_reg, start_reg, end_reg],
             )
         )
+
+    def _const(self, value: object) -> str:
+        """Emits a LoadConst into a fresh register, recording its type
+        so the LLVM backend knows how to represent it."""
+        reg = self.registers.new_reg()
+        self._emit(LoadConst(dest=reg, value=value))
+        if isinstance(value, bool):
+            self.register_types[reg] = BOOL
+        elif isinstance(value, int):
+            self.register_types[reg] = INT
+        elif isinstance(value, float):
+            self.register_types[reg] = FLOAT
+        elif isinstance(value, str):
+            self.register_types[reg] = STRING
+        return reg
 
     # ---- expressions (each returns the register holding its result) ----
 

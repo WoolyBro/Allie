@@ -30,6 +30,7 @@ import llvmlite.binding as llvm
 import llvmlite.ir as ir
 
 from allie.codegen import runtime_bridge
+from allie.quant.backtest_engine import register_when_body
 
 _initialized = False
 
@@ -114,6 +115,20 @@ def compile_and_run(module: ir.Module, entry_fn_name: str) -> None:
     engine.finalize_object()
     engine.run_static_constructors()
 
+    # Publish each JIT-compiled `when` body as a zero-argument callable
+    # the backtest engine can invoke per-bar. The IR interpreter fills
+    # the same dispatch table with closures over `run_ir_program` -- so
+    # `allie.quant.backtest_engine` drives all three backends without
+    # knowing which one it's running under. This can only happen after
+    # finalize_object(), since that's when addresses become available.
+    for global_value in backing_mod.functions:
+        if not global_value.name.startswith("__when_body_"):
+            continue
+        body_addr = engine.get_function_address(global_value.name)
+        body_cfunc = ctypes.CFUNCTYPE(None)(body_addr)
+        keepalive.append(body_cfunc)
+        register_when_body(global_value.name, body_cfunc)
+
     fn_ptr = engine.get_function_address(entry_fn_name)
     if fn_ptr == 0:
         raise RuntimeError(f"JIT engine produced a null address for '{entry_fn_name}'")
@@ -121,7 +136,7 @@ def compile_and_run(module: ir.Module, entry_fn_name: str) -> None:
     try:
         entry_cfunc()  # keepalive/engine must still be alive at this point
     finally:
-        del keepalive
+        keepalive.clear()
 
     pending = runtime_bridge.take_pending_exception()
     runtime_bridge.clear_registry()

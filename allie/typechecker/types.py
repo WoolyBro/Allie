@@ -88,6 +88,17 @@ class PriceSeriesType(_SingletonType):
     _name = "PriceSeries"
 
 
+class StrategyType(_SingletonType):
+    """The type of a declared `strategy` (Phase 7.2), so a `backtest`
+    statement can verify its target through the ordinary
+    TypeEnvironment lookup rather than a separate strategy registry.
+    Deliberately NOT registered in _BASE_TYPES_BY_NAME: a strategy is
+    introduced by the `strategy` construct, never written as a type
+    annotation."""
+
+    _name = "Strategy"
+
+
 class AnyType(_SingletonType):
     """Top type: is_assignable(source, ANY) is always True (see
     is_assignable below). Exists only so `print`'s parameter can accept
@@ -107,6 +118,7 @@ VOID = VoidType()
 DATE = DateType()
 DATE_RANGE = DateRangeType()
 PRICE_SERIES = PriceSeriesType()
+STRATEGY = StrategyType()
 ANY = AnyType()
 
 

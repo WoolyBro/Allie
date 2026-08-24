@@ -2,11 +2,12 @@
 timeseries/" and "quant/indicators/" in the merge notes -- kept at this
 path since that's what was explicitly given as the heading).
 
-`crosses_above`/`crosses_below` deliberately do NOT live here yet even
-though they're named in this same file in the spec -- they only exist
-for the strategy/when DSL and are explicitly Phase 7's responsibility to
-implement and test. Not building them now; don't be surprised when they
-land in this exact file later.
+`crosses_above`/`crosses_below` landed here in Phase 7, as flagged back
+in Phase 4.3 -- they exist only for the strategy/when DSL, so they were
+deferred until the backtest engine that consumes them existed. They
+return a `BoolSeriesValue` (`Series<Bool>`), not a `SeriesValue`: see
+that class's docstring for why a boolean series isn't just float64
+1.0/0.0.
 
 `rolling` as a generic higher-order function (window, fn) isn't built:
 Allie has no first-class function *values* usable as arguments from
@@ -21,11 +22,12 @@ from __future__ import annotations
 import numpy as np
 
 from allie.runtime.errors import AllieValueError
-from allie.runtime.values import SeriesValue
+from allie.runtime.values import BoolSeriesValue, SeriesValue
 from allie.stdlib.registry import register
-from allie.typechecker.types import FLOAT, INT, FunctionType, SeriesType
+from allie.typechecker.types import BOOL, FLOAT, INT, FunctionType, SeriesType
 
 _SERIES_FLOAT = SeriesType(FLOAT)
+_SERIES_BOOL = SeriesType(BOOL)
 
 
 def SMA(series: SeriesValue, window: int) -> SeriesValue:  # noqa: N802 - matches spec's exact name
@@ -109,6 +111,36 @@ def pct_change(series: SeriesValue) -> SeriesValue:
     return SeriesValue(result)
 
 
+def _crossing(a: SeriesValue, b: SeriesValue, fn_name: str, above: bool) -> BoolSeriesValue:
+    if len(a) != len(b):
+        raise AllieValueError(
+            f"{fn_name}: series must be the same length, got {len(a)} and {len(b)}"
+        )
+    prev_a = shift(a, 1).data
+    prev_b = shift(b, 1).data
+    if above:
+        now = a.data > b.data
+        before = prev_a <= prev_b
+    else:
+        now = a.data < b.data
+        before = prev_a >= prev_b
+    # shift() NaN-fills index 0, and every NaN comparison is False, so
+    # the first bar can never be a crossing -- correct, since there is
+    # no prior bar to have crossed from.
+    return BoolSeriesValue(now & before)
+
+
+def crosses_above(a: SeriesValue, b: SeriesValue) -> BoolSeriesValue:
+    """True exactly at each bar where `a` moves from at-or-below `b` to
+    strictly above it: `(a > b) & (shift(a,1) <= shift(b,1))`."""
+    return _crossing(a, b, "crosses_above", above=True)
+
+
+def crosses_below(a: SeriesValue, b: SeriesValue) -> BoolSeriesValue:
+    """Symmetric to `crosses_above`."""
+    return _crossing(a, b, "crosses_below", above=False)
+
+
 register("SMA", FunctionType(params=(_SERIES_FLOAT, INT), ret=_SERIES_FLOAT), SMA)
 register("EMA", FunctionType(params=(_SERIES_FLOAT, INT), ret=_SERIES_FLOAT), EMA)
 register(
@@ -118,3 +150,13 @@ register("rolling_std", FunctionType(params=(_SERIES_FLOAT, INT), ret=_SERIES_FL
 register("shift", FunctionType(params=(_SERIES_FLOAT, INT), ret=_SERIES_FLOAT), shift)
 register("diff", FunctionType(params=(_SERIES_FLOAT,), ret=_SERIES_FLOAT), diff)
 register("pct_change", FunctionType(params=(_SERIES_FLOAT,), ret=_SERIES_FLOAT), pct_change)
+register(
+    "crosses_above",
+    FunctionType(params=(_SERIES_FLOAT, _SERIES_FLOAT), ret=_SERIES_BOOL),
+    crosses_above,
+)
+register(
+    "crosses_below",
+    FunctionType(params=(_SERIES_FLOAT, _SERIES_FLOAT), ret=_SERIES_BOOL),
+    crosses_below,
+)

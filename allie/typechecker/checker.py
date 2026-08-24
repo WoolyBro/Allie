@@ -56,6 +56,7 @@ from allie.typechecker.types import (
     FLOAT,
     INT,
     PRICE_SERIES,
+    STRATEGY,
     STRING,
     VOID,
     FunctionType,
@@ -252,6 +253,10 @@ class TypeChecker:
             )
 
     def _check_strategy(self, stmt: StrategyDecl) -> None:
+        # Bind the name before checking the clauses so a `backtest` can
+        # resolve it (and so a strategy could reference itself without
+        # tripping the undefined-name check).
+        self.env.define(stmt.name, STRATEGY)
         for clause in stmt.when_clauses:
             self._check_when_clause(clause)
 
@@ -271,11 +276,35 @@ class TypeChecker:
         self._check_stmt(clause.body)
 
     def _check_backtest(self, stmt: BacktestStmt) -> None:
-        # TODO(Phase 7): stmt.strategy_name must resolve to a declared,
-        # type-checked StrategyDecl once strategy type-checking exists.
-        # The resolver (allie.semantic.resolver) already checks that the
-        # name was *declared*; this is the follow-up type-level check.
-        _ = stmt
+        # Phase 3.2 left this half-stubbed ("must resolve to a declared
+        # StrategyDecl once strategy type-checking exists") -- wired for
+        # real now, through the same TypeEnvironment lookup any other
+        # identifier goes through, not a separate mechanism.
+        strategy_type = self.env.get(stmt.strategy_name)
+        if strategy_type is None:
+            raise QSTypeError(
+                f"undefined strategy '{stmt.strategy_name}'", stmt.span.line, stmt.span.column
+            )
+        if strategy_type != STRATEGY:
+            raise QSTypeError(
+                f"'{stmt.strategy_name}' is not a strategy (it is {strategy_type})",
+                stmt.span.line,
+                stmt.span.column,
+            )
+
+        # `on SYM` names a variable holding a PriceSeries -- the grammar
+        # makes it an IDENTIFIER, so it resolves like any other name.
+        symbol_type = self.env.get(stmt.symbol)
+        if symbol_type is None:
+            raise QSTypeError(
+                f"undefined name '{stmt.symbol}'", stmt.span.line, stmt.span.column
+            )
+        if symbol_type != PRICE_SERIES:
+            raise QSTypeError(
+                f"backtest symbol '{stmt.symbol}' must be a PriceSeries, got {symbol_type}",
+                stmt.span.line,
+                stmt.span.column,
+            )
 
     # ---- expressions ----
 
