@@ -267,3 +267,65 @@ clause operands at the *declaration* site, while the tree walker defers
 them to the `backtest` statement. For any program that computes its
 indicators before declaring the strategy — every realistic one, and
 every one in the test suite — both give identical results.
+
+## Phase 8 — Testing & benchmarking infrastructure
+
+### Test suite shape
+
+- **`tests/unit/`** — one file per compiler stage.
+- **`tests/integration/fixtures/*.qs`** paired with `.expected` files, run
+  by one parametrized test. Three families are represented and a test
+  guards their presence: pure-CS, quant-only, and combined. Every fixture
+  runs on **all three backends** against the same `.expected` file, so
+  this doubles as a continuous three-way agreement check rather than
+  diffing one backend against itself.
+- **`tests/golden/`** — IR and LLVM IR snapshots. These catch lowering
+  regressions the behavioral tests miss: a lowering can emit different
+  instructions and still compute the right answer, right up until it
+  doesn't.
+
+`@FIXTURE@` in a fixture source is substituted with an absolute CSV path
+at run time. Fixtures can't hardcode a relative path because pytest's
+working directory isn't guaranteed to be the repo root.
+
+### Golden snapshots need normalization to exist at all
+
+Verified by diffing two runs, not assumed: **LLVM IR dumps are not
+deterministic.** Non-scalar constants (strings, and the packed specs the
+backtest lowering emits) cross into JIT code as boxed handles — `id()`
+of a live Python object — so their numeric value is a memory address
+that changes every run. A naive golden file would fail immediately and
+always.
+
+`_normalize` therefore folds two things out of every snapshot:
+
+1. Integer literals at or above `2**32` become `<handle>`. That
+   threshold is a documented heuristic — object addresses sit far above
+   it, program literals far below — not a guarantee. It can never
+   produce a false pass, since surrounding instruction structure is
+   still compared exactly.
+2. The absolute fixture path becomes `@FIXTURE@`, which otherwise bakes
+   the generating machine's home directory into a committed file.
+
+A test asserts the normalization actually fires, so it can't silently
+become a no-op.
+
+### Coverage
+
+Floor of **85%** (current ~92%) in `pyproject.toml`, enforced in CI.
+Phase 8.1 specified four `--cov` roots from an earlier layout; this repo
+flattened them under `allie/`, so one source root covers the same code.
+
+### Benchmarks
+
+See `benchmarks/README.md` for methodology and the honest reading of the
+numbers. Structurally: three workload families (quant, pure-CS, blended),
+each defined twice — Allie and hand-written Python — timed over N trials
+with the first discarded, compile and run measured separately, and the
+optimizer toggled on/off as the only difference between two columns.
+
+The pure-CS workload is what makes the headline result visible: the JIT
+is ~142x faster than the tree-walking interpreter and ~12x faster than
+hand-written Python on loop-heavy code. On quant workloads Allie is
+*slower* than Python, because both bottom out in the same numpy/pandas
+calls — reported plainly rather than omitted.

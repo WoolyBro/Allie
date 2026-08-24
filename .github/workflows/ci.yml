@@ -30,5 +30,8 @@ jobs:
       - name: Type check (mypy)
         run: uv run mypy .
 
-      - name: Test (pytest)
-        run: uv run pytest
+      # --cov (no argument) picks up [tool.coverage.run] source and the
+      # fail_under floor from pyproject.toml, so the threshold lives in
+      # one place rather than being duplicated in this workflow.
+      - name: Test (pytest, with coverage floor)
+        run: uv run pytest --cov --cov-report=term-missing

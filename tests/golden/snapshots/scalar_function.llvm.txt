@@ -1,0 +1,37 @@
+; ModuleID = "allie_module"
+target triple = "unknown-unknown-unknown"
+target datalayout = ""
+
+define i64 @"factorial"(i64 %".1")
+{
+entry:
+  %"n_ptr" = alloca i64
+  store i64 %".1", i64* %"n_ptr"
+  %"r0" = load i64, i64* %"n_ptr"
+  %".4" = icmp sle i64 %"r0", 1
+  br i1 %".4", label %"cont", label %"if_else_0"
+if_else_0:
+  %"r4" = load i64, i64* %"n_ptr"
+  %"r5" = load i64, i64* %"n_ptr"
+  %".7" = sub i64 %"r5", 1
+  %".8" = call i64 @"factorial"(i64 %".7")
+  %".9" = mul i64 %"r4", %".8"
+  ret i64 %".9"
+if_end_1:
+  unreachable
+cont:
+  ret i64 1
+}
+
+define void @"__allie_main"()
+{
+entry:
+  %".2" = call i64 @"factorial"(i64 5)
+  %".3" = call i64 @"box_int"(i64 %".2")
+  %".4" = call i64 @"call_builtin_bridge"(i64 <handle>, i64 %".3", i64 0, i64 0, i64 0, i64 1)
+  ret void
+}
+
+declare i64 @"box_int"(i64 %".1")
+
+declare i64 @"call_builtin_bridge"(i64 %".1", i64 %".2", i64 %".3", i64 %".4", i64 %".5", i64 %".6")

@@ -41,3 +41,7 @@ Thumbs.db
 # Project-specific
 benchmarks/results/
 *.log
+
+# Generated benchmark dataset -- reproducible from a fixed seed via
+# benchmarks.workloads.ensure_benchmark_data(), so not worth committing.
+benchmarks/data/

@@ -254,3 +254,36 @@ tree-walking interpreter; `main.py` defaults to LLVM/JIT.
 3. **The Phase 5.2 IR lowering for `strategy`/`when`/`backtest` was structurally broken** — nameless declare call, `when` bodies lowered inline and unconditionally, and raw strings passed where register names were expected. Invisible because these constructs were always-raising stubs until now. Rewritten: each body is its own zero-arg IRProgram, invoked through a dispatch table both the IR interpreter and the JIT fill.
 
 428 tests, ruff + mypy clean.
+
+## Phase 8 — Testing & benchmarking infrastructure (done)
+
+### 8.1 Test suite shape
+
+- [x] `tests/unit/` — already one file per compiler stage; added `test_benchmarks.py` so the harness itself is covered.
+- [x] `tests/integration/fixtures/*.qs` + `.expected`, driven by one parametrized runner. **All three families present** and guarded by a test that fails if one goes missing: pure-CS (`cs_loops`, `cs_goofy_keywords`, `cs_functions`), quant-only (`quant_indicators`, `quant_backtest`), combined (`blended_sweep`). Each fixture runs on **all three backends** against the same `.expected` file, so a drifting backend fails here even when self-consistent.
+- [x] `tests/golden/` — IR + LLVM IR snapshots for three programs, including the two Phase 8.1 named: `for_loop` (guards the Phase 5.2 desugar-to-`while`) and `strategy_backtest` (guards the Call-into-backtest-engine lowering Phase 7 had to rewrite). Verified these actually catch a regression by deliberately breaking the `for` desugar and confirming both snapshots failed with a readable diff.
+- [x] Coverage floor of **85%** (current: 92%) wired into `pyproject.toml` and CI. Phase 8.1's `--cov=qscript --cov=runtime --cov=stdlib --cov=quant` maps to `--cov=allie` in this repo's flattened layout — same code, including `allie/quant/backtest_engine.py`.
+
+### 8.2 Benchmark harness
+
+- [x] `benchmarks/workloads.py` — each workload defined twice (Allie + hand-written Python), across all three families, on a deterministic 10k-row dataset generated from a fixed seed.
+- [x] `benchmarks/run.py` — N trials with the first discarded, median wall clock, `tracemalloc` peak memory, and **compile vs run timed separately** (compile = lex + parse + **resolve** + type-check + lower + optimize).
+- [x] Optimizer on/off via the Phase 5.4 `pass_manager` toggle, as the only difference between two columns.
+- [x] `results.md` + `results.csv` with the specced columns plus LOC for both languages; `make bench` regenerates from a clean run.
+- [x] `Makefile` — `bench`, `bench-quick`, `check`, `regen-fixtures`, `regen-golden`.
+
+### What the benchmarks actually found
+
+Reported as measured, not as hoped:
+
+1. **The JIT is ~142x faster than the tree-walking interpreter on `loop_sum`**, and ~12x faster than hand-written Python. This is the project's strongest performance claim — and the pure-CS workload Phase 8.2 asked for is the only reason it's visible.
+2. **On quant workloads Allie is 1.9x–112x *slower* than Python.** Both sides bottom out in the same numpy/pandas calls, so compiling the surrounding code can't move library-dominated time. The language's argument there is expressiveness (backtest: 8 lines of Allie vs 20 of Python), not speed.
+3. **The optimizer moves total time by low single-digit percentages** — near noise. The passes act on scalar IR while these workloads sit inside bridged library calls. `test_optimizer.py` proves the transformations fire; the benchmark shows what that's worth on this mix.
+4. **`rolling_std` is 112x slower for a concrete, fixable reason**: `allie.stdlib.series_ops.rolling_std` is a Python loop (O(n·window)) where pandas is vectorized. A real stdlib optimization target the benchmark surfaced.
+
+### Two things verified rather than assumed
+
+- **LLVM IR dumps are not deterministic.** Confirmed by diffing two runs: non-scalar constants cross into JIT code as boxed handles (`id()` values), so they change every run. Golden snapshots normalize them (`<handle>`) plus the absolute fixture path, which would otherwise bake a machine-specific home directory into a committed file. A test asserts the normalization actually fires.
+- **`matmul_200` has no Allie side, and says so** instead of being dropped. Allie cannot construct a `Matrix` from source — array literals produce `Series` (nested: `Series<Series<Float>>`), and every `Matrix` builtin needs a `Matrix` argument. Checked directly. Reported in `results.md` as a language gap.
+
+467 tests, 92% coverage, ruff + mypy clean.
