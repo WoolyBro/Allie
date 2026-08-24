@@ -60,6 +60,19 @@ def test_binary_arithmetic_int_float_passes_with_float_result() -> None:
     assert _check_expr_type("1 + 2.0") == "Float"
 
 
+def test_string_concatenation_type_checks() -> None:
+    # Found while wiring up Phase 6: '+' on two Strings works fine
+    # dynamically in both interpreters but was rejected here until now.
+    assert _check_expr_type('"a" + "b"') == "String"
+
+
+def test_string_plus_number_still_rejected() -> None:
+    # Only the clean String+String case is legalized -- not the
+    # interpreters' looser "either side is a string" coercion.
+    with pytest.raises(QSTypeError):
+        _check_expr_type('"a" + 1')
+
+
 def test_comparison_result_is_bool() -> None:
     assert _check_expr_type("1 < 2") == "Bool"
 

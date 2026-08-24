@@ -9,6 +9,7 @@ authors = [{ name = "Ayush Mondal" }]
 dependencies = [
     "numpy>=1.26",
     "pandas>=2.2",
+    "llvmlite>=0.44",
 ]
 
 [project.scripts]
@@ -88,3 +89,8 @@ exclude = ["tests/", "benchmarks/", "examples/"]
 # arithmetic branch.
 module = ["allie.runtime.interpreter", "allie.ir.interpreter"]
 warn_return_any = false
+
+[[tool.mypy.overrides]]
+# llvmlite ships no type stubs / py.typed marker.
+module = "llvmlite.*"
+ignore_missing_imports = true

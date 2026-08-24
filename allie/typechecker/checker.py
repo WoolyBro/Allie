@@ -378,6 +378,20 @@ class TypeChecker:
         right_type = self._check_expr(expr.right)
 
         if expr.operator in _ARITHMETIC_OPS:
+            # Found while wiring up Phase 6's LLVM backend: `+` on two
+            # Strings type-checks fine dynamically in both the tree-
+            # walking and IR interpreters (string concatenation), but
+            # this check required numeric operands unconditionally --
+            # a real, pre-existing gap between the checker and what the
+            # interpreters actually do, invisible until something tried
+            # to run typed string concatenation through the full
+            # pipeline for the first time. Only the clean String+String
+            # case is legalized here, not the interpreters' looser
+            # "either side is a string" coercion -- that's a dynamic-
+            # typing leniency, not a rule this static checker should
+            # necessarily also encode.
+            if expr.operator == "+" and left_type == STRING and right_type == STRING:
+                return STRING
             if left_type not in (INT, FLOAT) or right_type not in (INT, FLOAT):
                 raise QSTypeError(
                     f"'{expr.operator}' requires numeric operands, "

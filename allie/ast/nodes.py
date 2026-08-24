@@ -28,11 +28,12 @@ from allie.errors import SourceSpan
 
 class Expr:
     """Marker base for expression nodes -- see docs/grammar.md. The bare
-    `span` annotation (no default, not a dataclass field here) exists
-    only so mypy knows every subclass has one; each concrete subclass
-    still declares its own `span` field for real."""
+    `span`/`inferred_type` annotations (no defaults, not dataclass fields
+    here) exist only so mypy knows every subclass has them; each concrete
+    subclass still declares its own fields for real."""
 
     span: SourceSpan
+    inferred_type: Any
 
 
 class Stmt:

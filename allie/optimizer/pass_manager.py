@@ -4,14 +4,17 @@ Phase 8 benchmark harness to produce "optimized vs unoptimized" numbers.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 from allie.ir.instructions import IRProgram
 
 Pass = Callable[[IRProgram], IRProgram]
 
 
-def run_passes(program: IRProgram, passes: list[Pass], enabled: bool) -> IRProgram:
+# Sequence, not list: `list` is invariant, so a caller's
+# `list[<concrete pass function>]` wouldn't satisfy a `list[Pass]`
+# parameter even though every element is a valid Pass.
+def run_passes(program: IRProgram, passes: Sequence[Pass], enabled: bool) -> IRProgram:
     """Runs `passes` in order over `program` if `enabled`, else returns
     `program` unchanged. Each pass is a pure `IRProgram -> IRProgram`
     function with no shared state, so the order they're listed in is the

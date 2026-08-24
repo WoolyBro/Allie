@@ -81,3 +81,101 @@ reflect later mutations to that environment (proven in
 `ZeroDivisionError` — user-facing errors go through the
 `allie.runtime.errors` hierarchy, never a leaked builtin exception (see
 `docs/spec.md` "Runtime error philosophy").
+
+## Phase 6 — LLVM backend + MCJIT
+
+A third execution backend, alongside the tree-walking interpreter
+(`allie.runtime.interpreter`) and the IR interpreter (`allie.ir.
+interpreter`). All three are cross-validated against each other in
+`tests/unit/test_llvm_cross_validation.py` — three independent paths
+agreeing on the same programs.
+
+### Type mapping (Phase 6.2)
+
+| Allie type | LLVM type |
+|---|---|
+| `Int` | `i64` |
+| `Float` | `double` |
+| `Bool` | `i1` |
+| `Void` | `void` |
+| `String` | `i64` — boxed handle (see below) |
+| `Series[T]` / `Matrix[T]` / `Vector[T]` / `PriceSeries` / `Date` / `DateRange` / `Any` | `i64` — boxed handle |
+
+**Deviation from the literal spec.** `String -> i8*` (a pointer to a
+global constant) was specified, scoped to "no dynamic string ops needed
+yet". But Allie's `+` does runtime string concatenation — proven in both
+interpreters' test suites — so a string's value isn't always a
+compile-time constant a fixed global could hold. Rather than special-case
+strings, *every* non-native-scalar type uses one uniform boxed-handle
+scheme: an opaque `i64` that is `id()` of a live Python object, kept
+alive by a registry in `allie.codegen.runtime_bridge`. One mechanism
+instead of two.
+
+**Series/Matrix/Vector native codegen is explicitly out of scope for
+v1**, per the spec. `SMA`, `mean`, `load`, etc. lower to external calls
+back into the existing Python/numpy runtime through
+`runtime_bridge.call_builtin_bridge` — never reimplemented in LLVM IR.
+`buy()`/`sell()`, `__make_series` (array literals), and the
+`strategy`/`when`/`backtest` stubs go through the same mechanism, with no
+special-casing: by the time lowering runs they're all just `Call`
+instructions.
+
+### Native vs. bridged dispatch
+
+Arithmetic/comparison on `Int`/`Float`/`Bool` compiles to direct LLVM
+instructions (`add`/`fadd`/`sdiv`/`srem`/`icmp_signed`/`fcmp_ordered`,
+including `%`). Anything else routes through the bridge, which calls the
+*same* `_apply_binop`/`_apply_unary` the IR interpreter uses — so there
+is no third reimplementation of operator semantics to drift out of sync.
+
+A call to a user-defined function with a fully-scalar signature becomes a
+direct native LLVM `call` (this is also how recursion works). A
+user-defined function with a `Series`/`Matrix`/... parameter or return
+type raises `LLVMLoweringError` rather than attempting boxed
+function-boundary marshalling — a deliberate, documented scope limit,
+since every real program calls *stdlib* functions for non-scalar work,
+never a user-defined one.
+
+### Confirming the Phase 5.2 desugar (Phase 6.3's required self-check)
+
+`for`/`break`/`continue` need **zero** dedicated code in the LLVM
+lowering. `Label`/`Jump`/`JumpIfFalse` become basic blocks and
+`br`/`cbranch` uniformly for `if`/`while`/`for` alike — precisely because
+Phase 5.2 already desugared `for` onto `while`'s shape. Traced
+`sum_to_n` through by hand to confirm no `for`-specific branch crept in;
+none did.
+
+### Two things the JIT boundary forced, verified rather than assumed
+
+**Exceptions can't cross a ctypes callback.** A Python exception raised
+inside a callback invoked from JIT-compiled code does *not* propagate to
+the Python caller — ctypes prints "Exception ignored" to stderr and the
+callback returns garbage. Every bridge function is therefore wrapped in a
+guard that records the exception in a module-level pending slot and
+returns a sentinel; once set, subsequent bridge calls short-circuit so a
+first failure can't cascade into confusing secondary errors.
+`jit.compile_and_run` re-raises it the moment the JIT call returns —
+the first point where a normal `raise` actually reaches the caller.
+
+**Native division by zero is undefined behavior, not a catchable
+error.** An `sdiv`/`srem` by zero traps at the hardware level and kills
+the process. So the lowering emits an explicit zero-check *before* the
+division: if the divisor is zero it calls the error bridge and returns
+from the function immediately, never reaching the division instruction.
+Both interpreters raise `AllieValueError` here, and now so does the JIT.
+
+### CLI
+
+Two entry points share one pipeline (`allie.cli.run_pipeline`):
+
+```
+python main.py <file> [--debug-tokens] [--debug-ast] [--debug-ir] [--no-optimize] [--backend ...]
+allie run <file> [--backend {tree,ir,llvm}] [--debug-tokens] [--debug-ast] [--debug-ir] [--no-optimize]
+```
+
+`main.py` implements the Phase 6.4 interface and defaults to the
+LLVM/JIT backend. `allie run` is the pre-existing installed console
+script and keeps its tree-walking default so nothing already written
+against it breaks. `--debug-ir` prints the Allie IR and the final LLVM IR
+as two clearly labeled sections. All flags are independent and
+combinable.

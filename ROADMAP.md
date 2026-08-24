@@ -173,3 +173,47 @@ to operate on and be demonstrated against.
 - [x] `tests/unit/test_optimizer.py`: 16 tests — every case the spec asked for (constant-fold collapse, DCE removing a dead store but never a `Call`, the loop-increment negative test, CSE's positive/negative reassignment cases, CSE's impure-call negative tests) plus the two control-flow-join regression tests above.
 
 317 tests total, ruff + mypy clean. Verified beyond the test suite: lowered + fully optimized (constant-fold → DCE → CSE) versions of a `for` loop, a recursive `factorial`, and an `if`/`else` all execute to the correct answer through the IR interpreter.
+
+## Phase 6 — LLVM backend + MCJIT (done)
+
+A **third** execution backend. `allie run` still defaults to the
+tree-walking interpreter; `main.py` defaults to LLVM/JIT.
+
+### 6.1 Setup
+
+- [x] `llvmlite` added as a project dependency (0.49.0, bundling LLVM 22.1.0), `uv.lock` regenerated. Verified a minimal hello-IR + MCJIT example standalone before writing any project code, per the spec's own first ask.
+- [x] **The spec's warning about API drift was justified** — three things had changed from what any older reference would say, each caught by testing rather than assumed: `llvm.initialize()` is not just deprecated but *removed* (calling it raises `RuntimeError`); `add_global_mapping` needs the `ValueRef` from the parsed backing module, not the `ir.Function` builder object (passing the latter gives an opaque `ctypes.ArgumentError`); and `get_function` raises `NameError` for an unknown symbol rather than returning `None`.
+
+### 6.2 Type mapping
+
+- [x] `Int -> i64`, `Float -> double`, `Bool -> i1`, `Void -> void`, documented in `docs/architecture.md`.
+- [x] **Deviation from spec, documented**: `String -> i8*` (pointer to a global constant) was specified on the premise that no dynamic string ops were needed — but Allie's `+` concatenates strings at runtime, already proven in both interpreters. Every non-native-scalar type instead uses one uniform boxed-`i64`-handle scheme (`allie/codegen/runtime_bridge.py`), rather than special-casing strings. One mechanism, not two.
+- [x] Series/Matrix/Vector native codegen explicitly out of scope; stdlib calls bridge back into the Python/numpy runtime.
+
+### 6.3 IR → LLVM IR lowering (`allie/codegen/llvm_lowering.py`)
+
+- [x] Native LLVM instructions for scalar `LoadConst`/`BinOp`/`UnaryOp` (including `%` — `srem`/`frem`), `Jump`/`JumpIfFalse`/`Label` → basic blocks and `br`/`cbranch`, `Call` → native call for scalar user functions or an external bridge call otherwise, function declarations from the type table.
+- [x] **Required self-check passed**: `for`/`break`/`continue` need zero dedicated code here — `Label`/`Jump`/`JumpIfFalse` handle `if`/`while`/`for` uniformly, exactly because Phase 5.2's desugar was applied consistently. Traced `sum_to_n` through by hand to confirm; no `for`-specific branch had crept in.
+- [x] Retrofitted `allie/ir/lowering.py` to record `register_types` and `FunctionInfo` (param/return types) from the type checker's existing annotations — LLVM codegen needs each register's static type, which the untyped IR didn't carry. Additive: the IR interpreter and its tests are unaffected.
+
+### 6.4 JIT execution (`allie/codegen/jit.py`) + CLI
+
+- [x] `compile_and_run(module, entry_fn_name)`: init, parse/verify, bind bridge symbols, finalize, invoke.
+- [x] `main.py` implementing the specified interface exactly — `python main.py <file> [--debug-tokens] [--debug-ast] [--debug-ir] [--no-optimize]`, all flags independent and combinable, `--debug-ir` printing the Allie IR and the LLVM IR as two labeled sections, `--no-optimize` toggling the Phase 5.4 pass manager. Defaults to LLVM/JIT per the spec's pipeline.
+- [x] Kept `allie run` too (installed console script, referenced by README/docs/tests) with its tree-walking default and a new `--backend {tree,ir,llvm}`; both entry points share `allie.cli.run_pipeline`. `--dump-tokens`/`--dump-ast` remain as aliases.
+
+### 6.5 Tests
+
+- [x] `tests/unit/test_llvm_lowering.py` (16 tests): LLVM backend on its own — native arithmetic, promotion, if/else, while, for with break+continue, short-circuit, recursion, string concat, quant calls via the bridge, and the documented non-scalar-user-function limitation.
+- [x] `tests/unit/test_llvm_cross_validation.py` (52 tests): **all three backends agree** across 22 programs (scalar, quant, and `for`/`break`/`continue`, per the spec's explicit ask); exact iteration counts asserted through the JIT path specifically (8 cases, including zero-iteration and inclusive-bound edges); plus optimized-vs-unoptimized JIT agreement on every program, verifying the optimizer's register rewrites don't invalidate the `register_types` map LLVM lowering depends on.
+- [x] External-call bridge exercised end-to-end through JIT for `SMA`/`mean`/`load`.
+
+### Three real bugs found by testing beyond the spec's own list
+
+1. **Exceptions silently vanish across the ctypes/JIT boundary.** Verified directly: a Python exception raised in a callback invoked from JIT code never reaches the Python caller — ctypes prints "Exception ignored" and returns garbage. Every bridge function now records the exception in a pending slot and returns a sentinel, with subsequent calls short-circuiting so one failure can't cascade; `compile_and_run` re-raises once control returns to Python.
+2. **Native division by zero was undefined behavior.** `sdiv`/`srem` by zero traps and kills the process. The lowering now emits an explicit zero-check that calls the error bridge and returns early, never reaching the division. Caught because the div-by-zero test *didn't raise* — the first version silently produced garbage.
+3. **`Move` broke LLVM's SSA dominance rule.** Short-circuit `and`/`or` writes the same destination register from two different branches; aliasing the value directly produced "Instruction does not dominate all uses". Fixed with entry-block stack slots — allocated up front, since an `alloca` emitted lazily lands *after* the block's terminator and is invalid IR.
+
+**Also fixed, pre-existing:** the type checker rejected `+` on two `String`s, even though both interpreters have always concatenated them correctly — a real checker/interpreter gap, invisible until something ran typed string concatenation through the full pipeline for the first time. Regression tests added for both the fix and the still-rejected `"a" + 1` case.
+
+365+ tests total, ruff + mypy clean.

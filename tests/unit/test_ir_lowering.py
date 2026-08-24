@@ -23,9 +23,12 @@ from allie.parser.parser import Parser
 
 
 def _lower(source: str):
+    # This file only cares about instruction shapes, not the Phase 6
+    # register_types/function_info lower_program also returns -- drop them.
     tokens = Lexer(source).scan_tokens()
     program = Parser(tokens).parse()
-    return lower_program(program)
+    main_program, functions, _register_types, _function_info = lower_program(program)
+    return main_program, functions
 
 
 def test_arithmetic_lowers_to_loadconst_and_binop() -> None:

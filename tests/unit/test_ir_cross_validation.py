@@ -48,7 +48,7 @@ def _run_tree_walker(source: str) -> Environment:
 def _run_ir(source: str) -> Environment:
     tokens = Lexer(source).scan_tokens()
     program = Parser(tokens).parse()
-    main_program, functions = lower_program(program)
+    main_program, functions, _register_types, _function_info = lower_program(program)
     env = stdlib.create_global_environment()
     run_ir_program(main_program, env, functions, stdlib.BUILTINS)
     return env
