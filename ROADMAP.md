@@ -287,3 +287,31 @@ Reported as measured, not as hoped:
 - **`matmul_200` has no Allie side, and says so** instead of being dropped. Allie cannot construct a `Matrix` from source — array literals produce `Series` (nested: `Series<Series<Float>>`), and every `Matrix` builtin needs a `Matrix` argument. Checked directly. Reported in `results.md` as a language gap.
 
 467 tests, 92% coverage, ruff + mypy clean.
+
+## Phase 9 — Documentation & write-up (done)
+
+### Documentation
+
+- [x] `README.md` — rewritten, leading with `examples/blended.qs` (a `for` loop sweeping windows *and* a `strategy`/`backtest`) rather than a three-line scalar example, so the first impression actually shows the merge working. Real captured output, install steps, architecture diagram, doc index.
+- [x] `docs/how-it-works.md` — the main narrative. Traces one program through every stage with **real `--debug-ir` output** (both custom IR and LLVM IR) pasted in, not described; four design calls written as decisions rather than justifications; the benchmark table with an honest reading; known limits framed as v2 work.
+- [x] `docs/architecture.md` — head rewritten. The old pipeline diagram still said "not yet implemented (Phase 2)" for stages that had been working since Phase 2. Now one section per stage: what it does, why, and **what it deliberately does not do** — including the LLVM Series/Matrix scoping decision, `import`'s inert v1 scope, and the break-inside-`when` restriction. Per-phase implementation notes preserved below it.
+- [x] `docs/language-reference.md` — every type, the assignability table, every stdlib function with signature + example + edge cases, and the keyword table **generated from `KEYWORD_ALIASES`**, not hand-typed.
+- [x] `docs/grammar.md` — final consistency pass (see the two drifts found below).
+- [x] `docs/demo-script.md` — a 60-second verbal walkthrough keyed to a live `python main.py examples/blended.qs --debug-ir` run, with anticipated questions and fallbacks.
+- [x] `examples/blended.qs` — the flagship example, verified byte-identical on all three backends.
+
+### Cross-cutting checklist — audited, not assumed
+
+Working through the checklist found five real problems:
+
+1. **Error formats had drifted three ways.** `LexError` used `"... (line 1, col 7)"`, `QSTypeError` used `"... . Line 1, Column 7"`, and `AllieRuntimeError` had **no `__str__` at all** — runtime errors printed with no type prefix and no location. `QSTypeError`'s wording was pinned by an explicit spec requirement and a test, so it became canonical and the other two were brought into line. `tests/unit/test_error_formats.py` now pins it.
+2. **`crosses_above`/`crosses_below` were unclassified for purity.** Added in Phase 7, never wired into Phase 5.4's `PURE_FUNCTIONS` discipline — so CSE had been silently declining to optimize them. Fixed, and a test now asserts every registered builtin is classified pure or impure, so the next addition can't slip through.
+3. **Four keyword aliases had no end-to-end coverage.** `Ahhh` (while), `be` (func), `pmo` (false), `fax` (import) were only tested at the lexer. `tests/unit/test_keyword_alias_transparency.py` now runs canonical/goofy program pairs on all three backends and fails if a new alias isn't covered.
+4. **`docs/grammar.md`'s type list had drifted from the type checker.** `PriceSeries` (Phase 4) resolved fine but was undocumented; `Series`/`Matrix`/`Vector` were listed as if their type argument were optional, which the checker rejects. Both verified against real programs, then fixed and pinned by `tests/unit/test_docs_consistency.py`.
+5. **`examples/hello_world.ql` had never run.** Written in Phase 0 as a target to build toward, it called `load_csv`/`sma` (registered as `load`/`SMA`) and backtested a symbol it never loaded — broken for six phases with nothing to catch it. Fixed, renamed to `.qs`, and `tests/integration/test_examples.py` now runs every shipped example.
+
+Verified clean without changes: stdlib functions registered once and never special-cased; optimizer passes each have negative tests; `dce.py`/`cse.py` cannot disagree about purity (`cse` imports the shared set, `dce` never removes a `Call` at all).
+
+- [x] Phase completion tags applied (`v0.0-setup` … `v1.0-allie`), so the commit history itself documents the incremental build.
+
+510 tests, 93% coverage, ruff + mypy clean.

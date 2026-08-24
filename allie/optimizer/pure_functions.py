@@ -41,10 +41,23 @@ PURE_FUNCTIONS: frozenset[str] = frozenset(
         "dot",
         "zscore",
         "percentile",
+        # Added in Phase 9, not Phase 7 when these builtins landed: the
+        # Phase 9 audit found them unclassified, which meant CSE had
+        # been silently declining to optimize them. They are pure --
+        # deterministic functions of two series, no I/O, no state.
+        "crosses_above",
+        "crosses_below",
     }
 )
 
-# Never eligible for CSE/DCE-across-calls, even though some names below
-# aren't registered builtins yet -- listed explicitly so nobody adds them
-# to PURE_FUNCTIONS above without noticing this comment.
+# Never eligible for CSE/DCE-across-calls. The optimizer passes don't
+# consult this set -- `PURE_FUNCTIONS` is an allowlist, so anything
+# absent from it is already treated as impure. Its job is to make the
+# classification *deliberate*: `tests/unit/test_optimizer.py` asserts
+# every registered builtin appears in exactly one of these two sets, so
+# adding a builtin without deciding whether it is pure fails the build
+# rather than silently defaulting to "not optimized".
+#
+# That test was added in Phase 9 after the audit found `crosses_above`/
+# `crosses_below` (Phase 7) in neither set.
 KNOWN_IMPURE_FUNCTIONS: frozenset[str] = frozenset({"load", "print", "normal", "buy", "sell"})

@@ -1,86 +1,231 @@
 # Architecture
 
-Updated as each phase lands — one paragraph per stage, written when the
-stage is actually implemented, not speculatively ahead of it.
+Per-stage design notes: what each stage does, why it exists, and — the
+part that's usually left out — what it deliberately does *not* do.
+
+For a narrative walkthrough of one program through the whole pipeline,
+read [`how-it-works.md`](how-it-works.md) instead.
 
 ## Pipeline
 
 ```
-source (.ql)
-    │
-    ▼
-  Lexer            allie/lexer         — not yet implemented (Phase 2)
-    │
-    ▼
-  Parser           allie/parser        — not yet implemented (Phase 2)
-    │
-    ▼
-  AST              allie/ast           — not yet implemented (Phase 2)
-    │
-    ▼
-  Semantic/        allie/semantic,     — not yet implemented (Phase 3+)
-  gradual typing   allie/typechecker
-    │
-    ▼
-  Interpreter      allie/runtime/interpreter — Phase 1: hand-built trees
-                                                only, no lexer/parser
-                                                feeding it yet
-    │
-    ▼
-  (values)         allie/runtime/values, allie/runtime/environment
+ source (.qs)
+     │
+     ▼  allie/lexer/              Lexer          → tokens (line/col on each)
+     │                                             slang aliases resolved HERE, nowhere else
+     ▼  allie/parser/parser.py    Parser         → allie/ast/nodes.py (dataclass AST)
+     │                                             errors collect into a DiagnosticBag
+     ▼  allie/semantic/           Resolver       → scope + jump-placement checks
+     │                                             loop_depth, inside_strategy, inside_when
+     ▼  allie/typechecker/        Type checker   → annotates expr.inferred_type in place
+     │                                             gradual: optional annotations, enforced where present
+     ▼  allie/ir/lowering.py      IR lowering    → flat instruction list, virtual registers
+     │                                             `for` desugars to `while` shape HERE
+     ▼  allie/optimizer/          Optimizer      → constant fold, DCE, CSE (toggleable)
+     │
+     ├──────────► allie/runtime/interpreter/   tree-walking, straight off the AST
+     ├──────────► allie/ir/interpreter.py      IR interpreter
+     └──────────► allie/codegen/               LLVM IR → MCJIT
+                      │
+                      ▼  allie/codegen/runtime_bridge.py
+                  Python/numpy for Series, Matrix, strings, all stdlib calls
 ```
 
-`allie/ir`, `allie/optimizer`, and `allie/codegen/{llvm_lowering,jit}` are
-aspirational placeholders for a possible future execution backend — see
-`docs/spec.md` "Considered alternatives". Nothing executes through them yet;
-the interpreter runs directly off the AST (and, for now, off hand-built
-Python tuples standing in for the AST).
+Three backends execute the same programs and are cross-validated against
+each other. That redundancy is the project's main correctness argument:
+a bug would have to appear identically in three independent
+implementations to go unnoticed.
 
-## Phase 1 — hand-built evaluator
+---
 
-No lexer or parser exists yet. `allie.runtime.interpreter` evaluates trees
-built by hand in Python as tuples (`('binop', '+', ('num', 1), ('num', 2))`),
-so the evaluation semantics can be gotten right and tested in isolation
-before a real parser has to produce trees in this same shape. The parser
-(Phase 2) targets this exact node shape — this evaluator does not change
-when it lands.
+## Lexer (`allie/lexer/`)
 
-**Values.** Represented as raw Python `int` / `float` / `bool` / `str` — no
-wrapper class yet (`allie/runtime/values/__init__.py`). A `Closure` value
-(params, body, defining environment) is the only structured value so far,
-for functions.
+**Does:** characters → tokens, each carrying line and column. Resolves
+keyword spellings through one `KEYWORD_ALIASES` dict, so `ts` and `let`
+both emit `TokenType.LET`.
 
-**Numeric promotion.** `int op float -> float`. Booleans and strings are
-left alone by promotion (`+` on two strings concatenates instead).
+**Why:** the alias table is the entire implementation of the slang
+keywords feature. Putting it here — a single dict lookup with no
+branching — means every later stage is automatically spelling-agnostic,
+and adding an alias is one line.
 
-**Scoping.** `allie/runtime/environment.py`'s `Environment` is a
-parent-linked chain of `dict`s. `define()` introduces a binding in the
-*current* frame (enabling shadowing); `assign()` walks up to find an
-*existing* binding and mutates it in place, raising rather than silently
-creating a new global. Every `{ ... }` block gets its own child
-`Environment`.
+**Does not:** branch on which spelling it saw, or expose that
+information downstream. It also does not lowercase identifiers: lookup
+is case-sensitive on purpose, so `Ahhh` is `while` and `ahhh` is an
+identifier.
 
-**Control flow.** `break`/`continue`/`return` are implemented as internal
-exceptions (`BreakSignal`/`ContinueSignal`/`ReturnSignal`) raised by their
-respective statement nodes and caught by the nearest enclosing loop or call
-frame. This is the same mechanism Phase 2's real interpreter reuses
-unchanged — proven here, on hand-built trees, before a parser adds more
-moving parts.
+An invalid character is recorded and scanning continues (so one bad
+character doesn't hide the rest of the file); an unterminated string
+raises immediately, since there's nothing left to resynchronize on.
 
-**Short-circuit `and`/`or`.** Special-cased in `eval_expr` *before*
-evaluating the right operand — not implemented as an eager `binop`. Returns
-one of the two operand values (Python/JS-style), not a coerced `bool`.
+## Parser (`allie/parser/parser.py`)
 
-**Closures.** Capture their defining `Environment` *by reference*, not a
-snapshot of its values at definition time. A closure's captured variables
-reflect later mutations to that environment (proven in
-`tests/unit/test_phase1_eval.py`).
+**Does:** recursive descent, one method per grammar production,
+precedence climbing for expressions. Produces the dataclass AST in
+`allie/ast/nodes.py`.
 
-**Runtime errors.** Division/modulo by zero raise
-`allie.runtime.errors.AllieValueError`, not a bare Python
-`ZeroDivisionError` — user-facing errors go through the
-`allie.runtime.errors` hierarchy, never a leaked builtin exception (see
-`docs/spec.md` "Runtime error philosophy").
+**Why:** hand-written rather than generated — the grammar is small
+enough that a parser generator would add a build step and a debugging
+layer for no benefit.
+
+**Does not:** type-check, resolve names, or evaluate anything. On error
+it records a `Diagnostic` and resynchronizes to the next statement
+boundary rather than raising, so one syntax error doesn't mask the next
+five.
+
+## Resolver (`allie/semantic/resolver.py`)
+
+**Does:** walks a scope stack checking names exist, and checks jump
+placement — `break`/`continue` need an enclosing loop, `return` needs a
+function, `when` needs a strategy.
+
+**Why:** separating "does this name exist" from "does this name have the
+right type" keeps both passes simple. The resolver's `Scope` tracks
+existence only; the type checker's `TypeEnvironment` tracks types. They
+are deliberately different structures.
+
+**Does not:** existence-check the callee of a call. Builtins have no
+entry in the lexical scope chain, so treating every call target as a
+local would misfire on every `print`/`SMA`. The type checker validates
+call targets instead.
+
+**Design decision — jumps can't cross an execution boundary.**
+`loop_depth` resets to 0 when entering a function body or a `when`
+action. A `break` inside a `when` action cannot target a loop enclosing
+the *strategy declaration*: the action is a callback the backtest engine
+invokes per bar, so that loop isn't on the stack at runtime. A loop
+written *inside* the action is a perfectly valid target. `inside_when`
+selects a more specific error message; it deliberately does not subsume
+`loop_depth`.
+
+## Type checker (`allie/typechecker/`)
+
+**Does:** gradual typing — annotations optional but enforced where
+present. Annotates `inferred_type` on every expression node in place,
+which is what makes LLVM codegen possible later (it needs to know
+whether `+` is `add` or `fadd`).
+
+**Why:** fail-fast (raises on first error) rather than collect-and-report
+like the parser. A cascade of type errors from one root cause is rarely
+more useful than the first one.
+
+**Does not:** infer function signatures. Every parameter and return type
+must be annotated, including `-> Void`. Partial inference that works
+sometimes is harder to use than none.
+
+**Does not:** allow truthiness. Conditions must be exactly `Bool` —
+`if 1 { }` is an error, not a shorthand.
+
+## IR lowering (`allie/ir/`)
+
+**Does:** flattens the AST into a linear instruction list over virtual
+registers, with `Label`/`Jump`/`JumpIfFalse` for control flow.
+
+**Design decision — `for` gets no instructions of its own.** It
+desugars into exactly the shape `while` produces. The payoff is that
+LLVM lowering needed *zero* `for`-specific code. One subtlety: `for`'s
+`continue` targets a dedicated increment label, not the condition check
+— jump to the condition and the counter never advances. A golden
+snapshot pins this exact shape.
+
+**Design decision — flat list, no control-flow graph.** Simple, and
+sufficient for lowering to LLVM (which builds real basic blocks from the
+labels). The cost is that optimizer passes have to reason about
+reachability without a CFG, which is where both bugs in
+[`how-it-works.md`](how-it-works.md) §3.4 came from. A real CFG is the
+main v2 change here.
+
+**Does not:** support first-class function values. Functions are static
+and name-registered, so a function returned from another function and
+called later has no way to work through this path. Documented, and the
+cross-validation suite is scoped around it.
+
+## Optimizer (`allie/optimizer/`)
+
+**Does:** constant folding, dead-code elimination, common subexpression
+elimination. Each is a pure `IRProgram -> IRProgram` function; the pass
+manager is a single on/off switch so benchmarks can measure the
+difference.
+
+**Does not:** remove any `Call`, ever (DCE). It has no way to know
+whether a call is side-effecting without consulting purity, so it
+assumes every call matters. CSE *does* consult `PURE_FUNCTIONS` —
+defined once, in one module, so the two passes cannot disagree. A test
+asserts every registered builtin is classified pure or impure, so a new
+builtin can't silently default to "never optimized".
+
+**Does not:** do proper dataflow analysis. DCE's liveness asks "is this
+read anywhere in the program", not "read after this point" — strictly
+more conservative, but immune to the loop back-edge trap that a naive
+forward scan falls into. CSE invalidates its caches at every label, for
+the same reason from the other direction.
+
+## Backends
+
+### Tree-walking interpreter (`allie/runtime/interpreter/`)
+
+Runs straight off the AST, no IR. The default for `allie run`, and the
+reference implementation the other two are checked against.
+
+### IR interpreter (`allie/ir/interpreter.py`)
+
+Executes the flat instruction list directly. Operator logic is
+deliberately **re-implemented** rather than imported from the
+tree-walker: sharing the helpers would let a bug common to both hide
+from cross-validation, defeating the point of having two.
+
+### LLVM + MCJIT (`allie/codegen/`)
+
+Labels become basic blocks, jumps become `br`/`cbranch`. Scalar
+arithmetic (`Int`/`Float`/`Bool`) compiles to native instructions.
+
+**Design decision — Series/Matrix codegen is out of scope for v1.**
+Everything touching a `Series`, `Matrix`, or `String` crosses into
+Python as an opaque `i64` handle, and every stdlib call routes through
+`runtime_bridge`. Reimplementing vectorized rolling windows in LLVM IR
+to *maybe* match numpy is a large amount of work for a likely-zero gain
+— the benchmarks confirm quant workloads are already ~99% numpy time.
+The cost is real and bounded: a user-defined function taking a `Series`
+parameter is rejected with a clear error rather than compiled.
+
+**Does not:** let exceptions cross the JIT boundary. A Python exception
+raised inside a ctypes callback invoked from JIT code is swallowed by
+ctypes, never reaching the caller. Bridge functions record the exception
+in a pending slot and return a sentinel; `compile_and_run` re-raises it
+the moment control returns to Python.
+
+**Does not:** emit a bare `sdiv`/`srem`. Hardware division by zero traps
+and kills the process rather than raising, so the lowering emits an
+explicit zero-check first — matching both interpreters' behavior.
+
+---
+
+## Cross-cutting
+
+**Errors.** `LexError` and `QSTypeError` carry line/column and format
+identically: `{Kind}: {message}. Line {L}, Column {C}`. `AllieRuntimeError`
+uses the same shape but usually has no location — most runtime errors are
+raised inside stdlib functions operating on data ("mean: series must not
+be empty"), where no source position exists. Threading spans through the
+runtime is v2 work. `tests/unit/test_error_formats.py` pins the shared
+format so it can't drift again.
+
+**Generated docs.** `docs/keywords.md` and the keyword table in
+`docs/language-reference.md` are both generated from `KEYWORD_ALIASES`
+by `scripts/generate_keywords_doc.py`, with tests that fail if either
+drifts from the code.
+
+**`import` parses but resolves nothing.** There is no module loader, no
+path resolution, no cross-file binding. `import "foo";` type-checks and
+is then inert on every backend. Deliberately a parsed placeholder rather
+than something half-working that appears to load files.
+
+---
+
+## Phase notes
+
+Detailed notes from each phase's implementation, kept for
+reference.
 
 ## Phase 6 — LLVM backend + MCJIT
 

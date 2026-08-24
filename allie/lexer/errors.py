@@ -21,4 +21,10 @@ class LexError(Exception):
         self.column = column
 
     def __str__(self) -> str:
-        return f"LexError: {self.message} (line {self.line}, col {self.column})"
+        # One format across every user-facing error type
+        # (`{Kind}: {message}. Line {L}, Column {C}`). QSTypeError's
+        # wording was pinned by an explicit spec requirement and a test
+        # asserting the exact string, so it became the canonical shape
+        # and this one was brought into line -- rather than leaving two
+        # near-identical formats that differ only in punctuation.
+        return f"LexError: {self.message}. Line {self.line}, Column {self.column}"

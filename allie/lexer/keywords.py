@@ -60,13 +60,25 @@ KEYWORD_ALIASES: dict[str, TokenType] = {
 }
 
 
-def render_keywords_markdown() -> str:
-    """Render docs/keywords.md's content from KEYWORD_ALIASES -- the
-    single source of truth. See scripts/generate_keywords_doc.py."""
+def render_keywords_table() -> str:
+    """Just the table. Shared by docs/keywords.md and the generated
+    block in docs/language-reference.md, so the two documents can never
+    disagree about which spellings exist."""
     by_token: dict[TokenType, list[str]] = {}
     for spelling, token_type in KEYWORD_ALIASES.items():
         by_token.setdefault(token_type, []).append(spelling)
 
+    lines = ["| Token | Canonical | Also accepted |", "|---|---|---|"]
+    for token_type, spellings in by_token.items():
+        canonical, *aliases = spellings
+        alias_cell = ", ".join(f"`{a}`" for a in aliases) if aliases else "—"
+        lines.append(f"| `{token_type.name}` | `{canonical}` | {alias_cell} |")
+    return "\n".join(lines) + "\n"
+
+
+def render_keywords_markdown() -> str:
+    """Render docs/keywords.md's content from KEYWORD_ALIASES -- the
+    single source of truth. See scripts/generate_keywords_doc.py."""
     lines = [
         "# Keywords",
         "",
@@ -82,14 +94,5 @@ def render_keywords_markdown() -> str:
         "supports slang aliases for them uniformly later without touching the "
         "lexer.",
         "",
-        "| Token | Spellings |",
-        "|---|---|",
     ]
-    for token_type, spellings in by_token.items():
-        canonical, *aliases = spellings
-        cell = f"`{canonical}`"
-        if aliases:
-            cell += " (aka " + ", ".join(f"`{alias}`" for alias in aliases) + ")"
-        lines.append(f"| `{token_type.name}` | {cell} |")
-
-    return "\n".join(lines) + "\n"
+    return "\n".join(lines) + "\n" + render_keywords_table()

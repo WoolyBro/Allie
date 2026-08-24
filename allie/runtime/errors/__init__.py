@@ -18,12 +18,33 @@ from allie.errors import SourceSpan
 
 
 class AllieRuntimeError(Exception):
-    """Base class for all errors raised while executing Allie code."""
+    """Base class for all errors raised while executing Allie code.
+
+    `__str__` matches the shared format used by `LexError` and
+    `QSTypeError` -- `{Kind}: {message}. Line {L}, Column {C}` -- but
+    drops the location clause when no span is available.
+
+    **Known limitation, stated rather than hidden:** almost no runtime
+    error carries a span today. The overwhelming majority are raised
+    inside stdlib functions operating on *data* ("mean: series must not
+    be empty"), where the meaningful context is the value, not a source
+    position -- and the runtime doesn't thread the currently-executing
+    node's span down into those calls. Doing so is a v2 change touching
+    every stdlib entry point; see docs/how-it-works.md "What's not
+    done". Until then, printing a bare message is more honest than
+    inventing a location.
+    """
 
     def __init__(self, message: str, span: SourceSpan | None = None) -> None:
         super().__init__(message)
         self.message = message
         self.span = span
+
+    def __str__(self) -> str:
+        kind = type(self).__name__
+        if self.span is None:
+            return f"{kind}: {self.message}"
+        return f"{kind}: {self.message}. Line {self.span.line}, Column {self.span.column}"
 
 
 class AllieTypeError(AllieRuntimeError):

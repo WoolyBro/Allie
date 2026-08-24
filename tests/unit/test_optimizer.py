@@ -323,3 +323,69 @@ def test_cse_does_not_alias_across_an_if_else_join() -> None:
     assert final_load.dest not in ("r0",)
     final_return = next(i for i in after.instructions if isinstance(i, Return))
     assert final_return.value == final_load.dest
+
+
+# ---- purity classification discipline (Phase 9 cross-cutting check) ----
+
+
+def test_every_registered_builtin_is_classified_pure_or_impure() -> None:
+    """Adding a stdlib builtin without deciding whether it's pure must
+    fail the build, not silently default to "never optimized".
+
+    This test exists because the Phase 9 audit found `crosses_above` and
+    `crosses_below` (added in Phase 7) in neither set -- so CSE had been
+    quietly declining to optimize them, with nothing to flag it.
+    """
+    import allie.stdlib as stdlib
+    from allie.optimizer.pure_functions import KNOWN_IMPURE_FUNCTIONS, PURE_FUNCTIONS
+
+    registered = set(stdlib.BUILTINS)
+    unclassified = sorted(registered - PURE_FUNCTIONS - KNOWN_IMPURE_FUNCTIONS)
+    assert not unclassified, (
+        f"builtins classified as neither pure nor impure: {unclassified}. "
+        "Add each to PURE_FUNCTIONS or KNOWN_IMPURE_FUNCTIONS in "
+        "allie/optimizer/pure_functions.py."
+    )
+
+
+def test_purity_sets_are_disjoint() -> None:
+    from allie.optimizer.pure_functions import KNOWN_IMPURE_FUNCTIONS, PURE_FUNCTIONS
+
+    assert not (PURE_FUNCTIONS & KNOWN_IMPURE_FUNCTIONS)
+
+
+def test_dce_defines_no_local_notion_of_purity() -> None:
+    """The checklist requires that neither pass redefine purity locally.
+    `cse.py` imports the shared set; `dce.py` satisfies the same intent
+    more strongly by never removing a Call at all, so it has no purity
+    concept to disagree with. This pins that: if `dce.py` ever grows its
+    own list, the two passes could drift.
+    """
+    from pathlib import Path
+
+    source = Path("allie/optimizer/dce.py").read_text(encoding="utf-8")
+    code = "\n".join(
+        line for line in source.splitlines() if not line.strip().startswith("#")
+    )
+    body = code.split('"""')[-1]  # drop the module docstring
+    assert "PURE" not in body, "dce.py appears to define or use a local purity set"
+
+
+def test_cse_optimizes_a_pure_crossing_call() -> None:
+    """Regression for the classification fix: two identical
+    `crosses_above` calls with no intervening reassignment must now
+    collapse. Before Phase 9 they did not."""
+    before = IRProgram(
+        instructions=[
+            LoadVar(dest="r0", name="fast"),
+            LoadVar(dest="r1", name="slow"),
+            Call(dest="r2", fn_name="crosses_above", args=["r0", "r1"]),
+            LoadVar(dest="r3", name="fast"),
+            LoadVar(dest="r4", name="slow"),
+            Call(dest="r5", fn_name="crosses_above", args=["r3", "r4"]),
+            Return(value="r5"),
+        ]
+    )
+    after = cse.run(before)
+    calls = [i for i in after.instructions if isinstance(i, Call)]
+    assert len(calls) == 1

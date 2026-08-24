@@ -15,14 +15,14 @@ side:
    clause, which would make every `let`, parameter, and return type
    mandatory. That contradicts the already-locked "gradual typing"
    decision in `docs/spec.md` ("dynamic by default; annotations enable a
-   lightweight checker") and would invalidate `examples/hello_world.ql`,
+   lightweight checker") and would invalidate `examples/hello_world.qs`,
    which already mixes annotated (`let prices: Series[float] = ...`) and
    unannotated (`let fast_ma = sma(...)`) `let`s. Treated the missing `?`
    as a paste omission, not a new decision — say so if mandatory typing
    was actually intended.
 2. **Generics use `Series[float]`** (brackets), not `Series<float>`
    (angle brackets). `docs/grammar.ebnf`, `docs/spec.md`, and
-   `examples/hello_world.ql` all already use bracket generics, and
+   `examples/hello_world.qs` all already use bracket generics, and
    brackets avoid the classic `<`/`>`-vs-comparison-operator parsing
    ambiguity that angle-bracket generics reintroduce. Kept brackets.
 
@@ -78,10 +78,24 @@ primary        → NUMBER | STRING | "true" | "false" | IDENTIFIER
                | "(" expression ")" | arrayLiteral
 arrayLiteral   → "[" (expression ("," expression)*)? "]"
 
-type           → baseType ("[" type "]")?
+type           → genericType | baseType
+genericType    → genericName "[" type "]"
+genericName    → "Series" | "Matrix" | "Vector"
 baseType       → "Int" | "Float" | "Bool" | "String" | "Void"
-               | "Series" | "Matrix" | "Vector" | "Date" | "DateRange"
+               | "Date" | "DateRange" | "PriceSeries"
 ```
+
+**Corrected in Phase 9** after checking the production against what the
+type checker actually resolves. Two drifts had crept in:
+
+- `PriceSeries` (added in Phase 4 as `load`'s return type) resolves
+  fine — `let p: PriceSeries = load(...)` works — but was missing from
+  `baseType`.
+- `Series`/`Matrix`/`Vector` were listed under `baseType` with the type
+  argument optional, which implies bare `let s: Series = ...` is legal.
+  It isn't: those three are generic *constructors* and the argument is
+  required (`resolve_base_type("Series")` returns nothing, so it fails
+  with "unknown type"). Split into `genericType` to say so.
 
 ## Notes carried over from Phase 2.1 (lexer)
 

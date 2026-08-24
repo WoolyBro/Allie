@@ -1,151 +1,282 @@
 # Allie Language Reference
 
-Filled in incrementally as each language feature actually lands — see
-`docs/architecture.md` for pipeline status and `docs/grammar.ebnf` (Phase 0
-placeholder) / `docs/grammar.md` (Phase 2+ merged grammar) for the formal
-grammar.
+Complete reference for types, the standard library, and keywords. For
+the formal grammar see [`grammar.md`](grammar.md); for how the compiler
+is put together see [`how-it-works.md`](how-it-works.md).
+
+---
 
 ## Types
 
-`Int`, `Float`, `Bool`, `String`, `Void`, `Date`, `DateRange`, `PriceSeries`
-(the type of stdlib `load`'s return value), and the generic quant types
-`Series[T]`, `Matrix[T]`, `Vector[T]` (bracket syntax in source;
-`Series<T>` etc. is how these render in error messages and `str()` —
-see `docs/grammar.md`'s reconciliation notes for why source syntax uses
-brackets, not angle brackets). `Array<T>` still exists but is no longer
-produced by anything user-writable — see "Array literals default to
-Series" below.
+| Type | Notes |
+|---|---|
+| `Int` | 64-bit signed. Native `i64` under LLVM. |
+| `Float` | Double precision. Native `double`. |
+| `Bool` | Native `i1`. No truthiness — conditions must be exactly `Bool`. |
+| `String` | Immutable. `+` concatenates. Boxed at the LLVM boundary. |
+| `Void` | A function returning nothing. Must be written explicitly (`-> Void`). |
+| `Series[T]` | 1-D numeric series. `Series[Float]` is the workhorse; `Series[Bool]` comes from the crossing operators. |
+| `Matrix[T]` | 2-D. Usable via the matrix stdlib, but **no literal syntax constructs one** — see Known limitations. |
+| `Vector[T]` | Declared in the grammar; no stdlib operates on it yet. |
+| `PriceSeries` | OHLCV bundle returned by `load`. Fields: `.open .high .low .close .volume` → `Series[Float]`, plus `.dates`. |
+| `Date`, `DateRange` | Declared in the grammar; not yet produced by anything. |
 
-`Any` exists internally (`is_assignable(source, ANY)` is always `True`)
-but is deliberately **not** a user-writable annotation — it exists only
-so stdlib `print` can accept any value. Writing `let x: Any` fails with
-"unknown type", by design: exposing a general escape hatch would
-undermine gradual typing's whole point for one narrow builtin need.
+Two types exist internally but **cannot be written in source**:
 
-### Array literals default to Series
-
-`[1, 2, 3]` type-checks as `Series<Int>`, not `Array<Int>` — this
-language operates on series by default, so an array literal should be
-usable anywhere a series is expected (fed straight into `SMA`, `mean`,
-a `when` clause, ...) without an extra conversion step. `ArrayType` is
-kept in `types.py` for a hypothetical future user-writable `Array[T]`
-annotation (there's no `Array` keyword in the grammar's `baseType` yet),
-but nothing currently produces one.
+- `Any` — only so `print` accepts anything. Writing `let x: Any` fails
+  with "unknown type", deliberately: a general escape hatch would
+  undermine the point of the type system.
+- `Strategy` — the type a `strategy` declaration binds, so `backtest`
+  can verify its target through ordinary name lookup.
 
 ### Assignability
 
-`allie.typechecker.types.is_assignable(source, target)`:
+`is_assignable(source, target)`:
 
-| Source | Target | Assignable? | Why |
+| Source | Target | OK? | Why |
 |---|---|---|---|
-| `T` | `T` (same type) | Yes | exact match |
-| anything | `Any` | Yes | `Any` is a top type — see above |
+| `T` | `T` | Yes | exact match |
+| anything | `Any` | Yes | top type, internal only |
 | `Int` | `Float` | Yes | widening |
-| `Float` | `Int` | **No** | narrowing rejected — would silently truncate |
-| `Float` | `Series<Float>` | **No** | a scalar is never assignable to a series — see below |
-| `Series<Int>` | `Series<Float>` | **No** | no per-element widening; the container types must match exactly |
-| anything else | anything else | No | no other conversions exist in v1 |
+| `Float` | `Int` | **No** | narrowing would silently truncate |
+| `Float` | `Series[Float]` | **No** | a scalar is not a one-element series |
+| `Series[Int]` | `Series[Float]` | **No** | no per-element widening; containers must match exactly |
+| anything else | anything else | No | no other conversions exist |
 
-**Why scalar → Series is rejected**: Series operations (`SMA`, `mean`, a
-`when` clause's crossover check, ...) are defined over an actual sequence
-of observations. Silently accepting a scalar where a series was expected
-would be exactly the class of bug this type distinction exists to catch
-— e.g. passing today's single closing price where a whole price history
-was expected. This falls out of `is_assignable`'s existing logic with no
-special-casing (there's simply no widening row for it) — see
-`test_typechecker_quant.py`'s `test_scalar_not_assignable_to_series` for
-the regression test guarding against a future change accidentally adding
-one.
+The scalar → `Series` rejection is the one worth calling out. Both carry
+`Float`, so it looks like it could work — but series operations are
+defined over a sequence of observations. Accepting a scalar there is
+exactly the bug the distinction exists to catch (passing today's close
+where a whole price history was expected).
 
-This table governs `let` initializers (when annotated), function
-argument passing, and `return` values. It's a plain lookup table keyed
-by each type's `str()`, not a hardcoded enum switch — see `types.py`'s
-module docstring for why that matters when a new type is added.
+Governs `let` initializers with annotations, function arguments, and
+`return` values.
 
-### Known limitations (v1, documented rather than silently inferred)
+### Gradual typing
 
-- **Functions require explicit parameter and return types.** No return-
-  type inference is attempted; a function with no `-> Type` (or a
-  parameter with no `: Type`) fails type-checking rather than silently
-  guessing. Simpler and more honest than partial inference — see
-  `allie/typechecker/checker.py`'s module docstring.
-- **"Every path returns" is a flat structural check, not full CFG
-  reachability.** It recognizes a direct `return`, and an `if`/`else`
-  where both branches return — it does not reason about loops that
-  always execute at least once, exhaustive `while true` bodies, etc.
-  Good enough to catch the common case; a function that provably always
-  returns via a more complex path may still be flagged as incomplete.
-- **`backtest`'s strategy reference isn't type-checked** (Phase 7, once
-  strategy type-checking exists) — the resolver already checks the name
-  was *declared* somewhere; the checker doesn't yet re-verify it.
-- **Field access (`a.b`) is only properly typed for `PriceSeries`**
-  (`.open`/`.high`/`.low`/`.close`/`.volume` → `Series<Float>`). Anything
-  else — including `PriceSeries.dates` (there's no `Series<Date>` type
-  to give it yet) and field access on any other type — is accepted as
-  `Void` rather than claiming a type that can't be verified. No general
-  record/module type system exists.
-- **`strategy`/`backtest` declarations type-check but don't execute.**
-  The interpreter raises a clear "not executable yet" error if a program
-  actually reaches one at runtime (Phase 7 builds the backtest engine).
-- **No first-class function values from source.** `rolling(series,
-  window, fn)` as a generic higher-order stdlib function isn't built —
-  `BuiltinFunction`/`Closure` are runtime-only wrapper types, not
-  something a `.ql` program can pass around as data yet. `rolling_mean`/
-  `rolling_std` are the concrete stand-ins.
+Annotations are optional; where present they're enforced. An unannotated
+`let` infers from its initializer.
 
-## Runtime representation (Phase 4.2)
+**Functions are the exception** — every parameter and the return type
+must be annotated, including `-> Void`. No inference is attempted. That
+is a deliberate v1 limitation: partial inference that works sometimes is
+worse to use than none.
 
-`SeriesValue`/`MatrixValue` are thin wrappers around plain numpy
-`float64` ndarrays — **not** `pandas.Series`/`DataFrame`. This is a
-deliberate simplification versus `docs/spec.md`'s original "Series wraps
-`pandas.Series`, don't reimplement `DatetimeIndex`" aspiration: Phase 4
-asked for a numpy wrapper specifically, so pandas stays a test-only
-dependency (cross-checking stdlib functions against a known-good
-reference), not a runtime one, for now. Revisit the pandas-backed
-version if/when real `DatetimeIndex` alignment (holiday calendars,
-resampling, ...) is actually needed.
+---
 
-`PriceSeriesValue.dates` is a plain numpy `datetime64[ns]` array, not a
-`SeriesValue` — `SeriesValue` is float64-only by construction, so
-forcing dates into one would either break that invariant or silently
-encode a date as a meaningless float. A documented, deliberate deviation
-from a literal reading of "each [OHLCV field, including dates] a
-SeriesValue".
+## Operators
 
-## Standard library (Phase 4.3)
+| Category | Operators | Rules |
+|---|---|---|
+| Arithmetic | `+ - * / %` | Both operands numeric. Result is `Float` if either is. `+` also concatenates two `String`s. |
+| Comparison | `< > <= >=` | Both operands numeric. Result `Bool`. |
+| Equality | `== !=` | Operands must be the *same* type. Result `Bool`. |
+| Logical | `and or` | Both operands `Bool`. Short-circuit. |
+| Unary | `-` `!` | `-` numeric; `!` `Bool`. |
 
-All 22 builtins are registered in `allie.stdlib.registry.BUILTINS`
-(name → `(FunctionType, Callable)`) — see `allie/stdlib/{registry,
-math_fns,series_ops,matrix_ops,stats_fns,io}.py`. Implementations use
-plain numpy, not pandas, matching the runtime-representation decision
-above; pandas is used only in `tests/unit/test_stdlib_*.py` to
-cross-check results against a known-good reference.
+`and`/`or` are keywords, not `&&`/`||`. Division or modulo by zero
+raises `AllieValueError` at runtime on all three backends — including
+the JIT, where an explicit zero-check is emitted before the divide
+(hardware division by zero would otherwise kill the process rather than
+raise).
 
-- **`normal(mean, std, n, seed)` takes an explicit `seed`**, beyond what
-  was literally specified (`normal(Float, Float, Int)`). Honors the
-  already-locked determinism decision in `docs/spec.md`: "All stochastic
-  stdlib functions ... take an explicit seed; no hidden global RNG
-  state." A seedless `normal` would be exactly the case that decision
-  rules out.
-- **`SMA`/`rolling_mean` NaN-pad the first `window - 1` points**,
-  matching pandas' `.rolling(window).mean()` convention.
-- **`std`/`variance`/`covariance`/`correlation` use `ddof=1`** (sample,
-  not population) and raise rather than returning `NaN` on an empty
-  series, a single-element series (undefined for `ddof=1`), or
-  mismatched-length series for the two-argument functions.
-- **`inverse`/`determinant`/`dot` raise `AllieValueError`** (not a raw
-  numpy `LinAlgError` or a bare dimension-mismatch message) on a
-  singular matrix, a non-square `determinant` target, or a dimension
-  mismatch in `dot`.
-- **`load` matches CSV columns case-insensitively** against
-  `date/open/high/low/close/volume` and names exactly which column is
-  missing, rather than surfacing a raw `KeyError`.
+---
 
-## Grammar note
+## Statements
 
-Phase 2.3 (`allie/parser/`) produces the dataclass-based AST in
-`allie/ast/nodes.py`; Phase 4 adapted `allie/runtime/interpreter` to walk
-that AST directly (superseding Phase 1's hand-built-tuple evaluator —
-see `ROADMAP.md` and `allie/runtime/interpreter/__init__.py`'s module
-docstring). A full `.ql` program can now run end to end through
-`allie run`.
+```allie
+let name: Type = expr;          // annotation optional
+func f(a: Int) -> Int { ... }   // annotations required
+if cond { ... } else { ... }    // cond must be exactly Bool
+while cond { ... }
+for let i: Int = 0; i < n; i = i + 1 { ... }
+break; continue; return expr;
+import "path";                  // parses, resolves nothing (see limitations)
+
+strategy Name {
+    when seriesA crosses_above seriesB: buy();
+    when seriesA crosses_below seriesB: sell();
+}
+backtest Name on Symbol from 0 to 100;
+```
+
+`backtest ... on SYM` — `SYM` is an ordinary variable holding a
+`PriceSeries` (typically from `load`). `from`/`to` are bar indices; `to`
+is clamped to the available bar count, so `to 100` against 60 bars runs
+60. A `from` past the end is an error, not a clamp.
+
+---
+
+## Standard library
+
+Every function is registered once in `allie/stdlib/registry.py` and
+resolved by name — none are special-cased anywhere else.
+
+### Statistics
+
+| Signature | |
+|---|---|
+| `mean(Series<Float>) -> Float` | |
+| `median(Series<Float>) -> Float` | |
+| `std(Series<Float>) -> Float` | sample std, `ddof=1` |
+| `variance(Series<Float>) -> Float` | sample, `ddof=1` |
+| `covariance(Series<Float>, Series<Float>) -> Float` | |
+| `correlation(Series<Float>, Series<Float>) -> Float` | |
+
+```allie
+let prices = load("data.csv");
+print(mean(prices.close));
+print(std(prices.close));
+```
+
+**Edge cases.** Empty series raises rather than returning `NaN` — an
+empty series is nearly always a bug (bad load, off-by-one window), and
+`NaN` would propagate silently through everything downstream.
+`std`/`variance` need ≥2 elements (`ddof=1` is undefined for one).
+`covariance`/`correlation` raise on mismatched lengths rather than
+truncating.
+
+Note these do *not* skip `NaN`: `mean` of a series containing `SMA`'s
+warmup padding is `NaN`. Correct, but surprising the first time.
+
+### Series operations
+
+| Signature | |
+|---|---|
+| `SMA(Series<Float>, Int) -> Series<Float>` | simple moving average |
+| `EMA(Series<Float>, Int) -> Series<Float>` | `alpha = 2/(span+1)` |
+| `rolling_mean(Series<Float>, Int) -> Series<Float>` | alias for `SMA` |
+| `rolling_std(Series<Float>, Int) -> Series<Float>` | |
+| `shift(Series<Float>, Int) -> Series<Float>` | positive shifts forward |
+| `diff(Series<Float>) -> Series<Float>` | first difference |
+| `pct_change(Series<Float>) -> Series<Float>` | |
+| `crosses_above(Series<Float>, Series<Float>) -> Series<Bool>` | |
+| `crosses_below(Series<Float>, Series<Float>) -> Series<Bool>` | |
+
+```allie
+let fast: Series[Float] = SMA(prices.close, 5);
+let slow: Series[Float] = SMA(prices.close, 20);
+let signal: Series[Bool] = crosses_above(fast, slow);
+```
+
+**Edge cases.** `SMA`/`rolling_mean`/`rolling_std` NaN-pad the first
+`window - 1` bars (pandas convention). `EMA` does **not** — it seeds
+from the first observation, which is why the `blended.qs` example uses
+`EMA` where it needs a `NaN`-free mean. `shift`/`diff`/`pct_change`
+NaN-fill vacated positions. Crossings are never true on the first bar
+(no prior bar to cross from) and use strict inequality, so touching
+without crossing doesn't fire; moving from *equal* to above does.
+Mismatched lengths raise.
+
+`rolling_std` is currently a Python loop (O(n·window)) where pandas is
+vectorized — ~112× slower on the benchmark. A known optimization target.
+
+### Matrix
+
+| Signature | |
+|---|---|
+| `transpose(Matrix<Float>) -> Matrix<Float>` | |
+| `inverse(Matrix<Float>) -> Matrix<Float>` | raises on singular |
+| `determinant(Matrix<Float>) -> Float` | raises on non-square |
+| `dot(Matrix<Float>, Matrix<Float>) -> Matrix<Float>` | raises on dimension mismatch |
+
+All raise `AllieValueError` with a readable message rather than leaking
+a raw numpy `LinAlgError`. **No source syntax constructs a `Matrix`** —
+see Known limitations.
+
+### Sampling
+
+| Signature | |
+|---|---|
+| `normal(Float, Float, Int, Int) -> Series<Float>` | `(mean, std, n, seed)` |
+| `zscore(Series<Float>) -> Series<Float>` | |
+| `percentile(Series<Float>, Float) -> Float` | `p` on 0–100 |
+
+`normal` takes an explicit **seed** — there is no hidden global RNG, so
+reruns are reproducible. `zscore` raises on zero standard deviation.
+`percentile` rejects `p` outside 0–100.
+
+### I/O and trading
+
+| Signature | |
+|---|---|
+| `load(String) -> PriceSeries` | CSV → OHLCV |
+| `print(Any) -> Void` | compact `Series` formatting |
+| `buy() -> Void` | strategy bodies only |
+| `sell() -> Void` | strategy bodies only |
+
+`load` matches `date,open,high,low,close,volume` case-insensitively and
+names the missing column if one is absent. `print` truncates long series
+(`Series[1, 2, 3, ..., 8, 9, 10]`). `buy`/`sell` raise unless a backtest
+is running — they're ordinary builtins, not keywords, so nothing earlier
+in the pipeline can tell they're special.
+
+---
+
+## Keywords
+
+Every control-flow keyword has a second, informal spelling. The lexer
+resolves both to the same token, so they are fully interchangeable
+everywhere — verified end to end on all three backends in
+`tests/unit/test_keyword_alias_transparency.py`.
+
+Lookup is **case-sensitive**: `Ahhh` is `while`; `ahhh` is an identifier.
+
+Quant keywords are canonical-only in v1. The alias mechanism would
+support them unchanged if that ever changes.
+
+<!-- BEGIN GENERATED KEYWORDS -- do not hand-edit; run scripts/generate_keywords_doc.py -->
+
+| Token | Canonical | Also accepted |
+|---|---|---|
+| `LET` | `let` | `ts` |
+| `FUNC` | `func` | `be` |
+| `IF` | `if` | `lowkey` |
+| `ELSE` | `else` | `nahhh` |
+| `WHILE` | `while` | `Ahhh` |
+| `FOR` | `for` | `grindset` |
+| `BREAK` | `break` | `bruh` |
+| `CONTINUE` | `continue` | `pullup` |
+| `RETURN` | `return` | `yeet` |
+| `IMPORT` | `import` | `fax` |
+| `TRUE` | `true` | `fr` |
+| `FALSE` | `false` | `pmo` |
+| `AND` | `and` | — |
+| `OR` | `or` | — |
+| `STRATEGY` | `strategy` | — |
+| `WHEN` | `when` | — |
+| `CROSSES_ABOVE` | `crosses_above` | — |
+| `CROSSES_BELOW` | `crosses_below` | — |
+| `BACKTEST` | `backtest` | — |
+| `ON` | `on` | — |
+| `FROM` | `from` | — |
+| `TO` | `to` | — |
+
+<!-- END GENERATED KEYWORDS -->
+
+---
+
+## Known limitations
+
+- **`import` parses but resolves nothing.** No module loader, no path
+  resolution. Deliberately inert rather than half-working.
+- **No `Matrix` literal syntax.** Array literals produce `Series` (a
+  nested one types as `Series[Series[Float]]`), and every matrix builtin
+  requires a `Matrix` argument — so nothing in the language can
+  construct the first one.
+- **`break`/`continue` cannot escape a `when` action.** It's a per-bar
+  callback; there's no enclosing loop to leave. A loop written *inside*
+  the action is fine.
+- **Assignment targets only bare names** — no `arr[i] = x` or
+  `obj.field = x`.
+- **Field access is typed only for `PriceSeries`.** Anything else is
+  accepted as `Void` rather than claiming a type that can't be verified.
+- **User-defined functions must be fully scalar to compile.** One taking
+  a `Series` parameter is rejected by the LLVM backend with a clear
+  error; it still runs on the other two backends.
+- **"Every path returns" is a structural check**, not full reachability
+  analysis. It sees direct `return`s and `if`/`else` where both branches
+  return.
+- **Most runtime errors lack line numbers**, because they originate
+  inside stdlib functions operating on data rather than at a source
+  position.

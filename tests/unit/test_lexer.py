@@ -243,4 +243,25 @@ def test_mixed_canonical_goofy_and_quant_keywords_coexist() -> None:
 
 def test_keywords_doc_matches_generated_output() -> None:
     docs_path = Path(__file__).resolve().parents[2] / "docs" / "keywords.md"
-    assert docs_path.read_text(encoding="utf-8") == render_keywords_markdown()
+    assert docs_path.read_text(encoding="utf-8") == render_keywords_markdown(), (
+        "docs/keywords.md is stale -- run python scripts/generate_keywords_doc.py"
+    )
+
+
+def test_language_reference_keyword_block_matches_generated_output() -> None:
+    """The reference doc's keyword table is generated from the same dict
+    (Phase 9's checklist: generated, not hand-typed). Two documents
+    rendering the same source of truth can still drift if only one is
+    regenerated -- this pins both."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+    from generate_keywords_doc import render_reference_block
+
+    reference = (
+        Path(__file__).resolve().parents[2] / "docs" / "language-reference.md"
+    ).read_text(encoding="utf-8")
+    assert render_reference_block() in reference, (
+        "docs/language-reference.md's generated keyword block is stale -- "
+        "run python scripts/generate_keywords_doc.py"
+    )
