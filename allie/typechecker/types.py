@@ -13,10 +13,10 @@ from __future__ import annotations
 
 class Type:
     """Base class for every static type. __str__ (overridden by every
-    subclass to match Allie's surface syntax, e.g. `Int`, `Array<Int>`)
+    subclass to match Allie's surface syntax, e.g. `Int`, `Series<Int>`)
     IS the type's identity for __eq__/__hash__, which gives structural
     equality "for free" on every subclass, including compound ones like
-    ArrayType/FunctionType, without each needing its own __eq__."""
+    SeriesType/FunctionType, without each needing its own __eq__."""
 
     def __str__(self) -> str:  # pragma: no cover - overridden everywhere
         raise NotImplementedError
@@ -122,43 +122,31 @@ STRATEGY = StrategyType()
 ANY = AnyType()
 
 
-class ArrayType(Type):
-    """No longer produced by array-literal expressions as of Phase 4 --
-    those now default to SeriesType (see checker.py's
-    `_check_array_literal` and docs/language-reference.md "Array
-    literals default to Series"). Kept for a hypothetical future
-    user-writable `Array[T]` annotation, which the grammar doesn't
-    expose yet (there's no `Array` keyword in `baseType`)."""
+class _GenericType(Type):
+    """Base for the parameterized quant types. Mirrors `_SingletonType`
+    above: one `_name` per subclass, everything else shared. The three
+    subclasses were previously identical copies differing only in a
+    literal inside `__str__`."""
+
+    _name: str = ""
 
     def __init__(self, elem: Type) -> None:
         self.elem = elem
 
     def __str__(self) -> str:
-        return f"Array<{self.elem}>"
+        return f"{self._name}<{self.elem}>"
 
 
-class SeriesType(Type):
-    def __init__(self, elem: Type) -> None:
-        self.elem = elem
-
-    def __str__(self) -> str:
-        return f"Series<{self.elem}>"
+class SeriesType(_GenericType):
+    _name = "Series"
 
 
-class MatrixType(Type):
-    def __init__(self, elem: Type) -> None:
-        self.elem = elem
-
-    def __str__(self) -> str:
-        return f"Matrix<{self.elem}>"
+class MatrixType(_GenericType):
+    _name = "Matrix"
 
 
-class VectorType(Type):
-    def __init__(self, elem: Type) -> None:
-        self.elem = elem
-
-    def __str__(self) -> str:
-        return f"Vector<{self.elem}>"
+class VectorType(_GenericType):
+    _name = "Vector"
 
 
 class FunctionType(Type):

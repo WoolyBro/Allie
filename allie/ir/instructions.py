@@ -60,19 +60,6 @@ class StoreVar(IRInstr):
 
 
 @dataclass
-class LoadSeries(IRInstr):
-    """Defined per the Phase 5.1 instruction list, but not currently
-    emitted by the lowering pass: array-literal lowering builds a
-    SeriesValue at runtime through a `Call` to an internal
-    `__make_series` builtin instead (see lowering.py's `_lower_expr` for
-    ArrayLiteral), which was the explicit Phase 5.2 decision. Kept here,
-    unused, rather than silently dropped from the instruction set."""
-
-    dest: str
-    source_expr_desc: str
-
-
-@dataclass
 class BinOp(IRInstr):
     dest: str
     op: str

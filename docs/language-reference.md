@@ -168,8 +168,13 @@ NaN-fill vacated positions. Crossings are never true on the first bar
 without crossing doesn't fire; moving from *equal* to above does.
 Mismatched lengths raise.
 
-`rolling_std` is currently a Python loop (O(n·window)) where pandas is
-vectorized — ~112× slower on the benchmark. A known optimization target.
+`rolling_std` is vectorized with `sliding_window_view` and is
+bit-identical to the per-window loop it replaced (~190× faster than
+that loop). It is deliberately *not* implemented with the cumulative
+sum-of-squares trick, which is faster still but loses accuracy to
+catastrophic cancellation on price-like data. `EMA` remains a Python
+loop on purpose — it is a first-order recurrence whose vectorized
+closed form overflows to non-finite values on long series.
 
 ### Matrix
 

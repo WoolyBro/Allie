@@ -14,31 +14,30 @@ single clean run.
 
 ## Headline
 
-- **Best JIT speedup: `loop_sum` (pure-cs), 142x faster than the tree-walking interpreter** and 11.7x faster than the hand-written Python.
-- On the quant workloads the JIT is **1.9x to 112x slower** than hand-written Python (best `sma_10k`, worst `rolling_std`). Both sides bottom out in the same numpy/pandas calls, so compiling the surrounding Allie code can't move a number already dominated by library time.
-- The `rolling_std` outlier is a real, actionable finding, not measurement error: `allie.stdlib.series_ops.rolling_std` is a Python loop over the series (O(n*window)) where pandas uses a vectorized rolling algorithm. That is a stdlib optimization target, and no amount of compiler work on the *language* would close it.
-- **The optimizer moves total time by +0.3% to +4.7%** -- small enough to be near measurement noise. Reported as measured rather than talked up: the passes (constant folding, DCE, CSE) act on scalar IR, while these workloads spend their time inside bridged library calls the passes deliberately never touch. `tests/unit/test_optimizer.py` shows the transformations do fire; this table shows how little that is worth on *this* mix of workloads.
+- **Best JIT speedup: `loop_sum` (pure-cs), 127x faster than the tree-walking interpreter** and 11.0x faster than the hand-written Python.
+- On the quant workloads the JIT is **2.1x to 9x slower** than hand-written Python (best `sma_10k`, worst `rolling_std`). Both sides bottom out in the same numpy/pandas calls, so compiling the surrounding Allie code can't move a number already dominated by library time.
+- **The optimizer moves total time by +0.4% to +4.1%** -- small enough to be near measurement noise. Reported as measured rather than talked up: the passes (constant folding, DCE, CSE) act on scalar IR, while these workloads spend their time inside bridged library calls the passes deliberately never touch. `tests/unit/test_optimizer.py` shows the transformations do fire; this table shows how little that is worth on *this* mix of workloads.
 
 ## Wall clock (total: compile + run)
 
 | Workload | Family | Python | Allie (interp) | Allie (JIT, unopt) | Allie (JIT, opt) | LOC (Py) | LOC (Allie) |
 |---|---|---|---|---|---|---|---|
-| `sma_10k` | quant | 117.71 | 216.79 | 228.98 | 228.35 | 6 | 6 |
-| `rolling_std` | quant | 22.60 | 2578.60 | 2599.58 | 2525.52 | 6 | 6 |
-| `backtest_ma` | quant | 2.77 | 3.06 | 13.47 | 13.07 | 20 | 8 |
-| `matmul_200` | quant | 1.50 | n/a | n/a | n/a | 3 | n/a |
-| `loop_sum` | pure-cs | 74.89 | 910.17 | 6.65 | 6.40 | 6 | 7 |
-| `blended_sweep` | blended | 7.20 | 4.89 | 15.63 | 14.90 | 8 | 7 |
+| `sma_10k` | quant | 104.40 | 199.71 | 227.00 | 221.21 | 6 | 6 |
+| `rolling_std` | quant | 21.79 | 197.62 | 194.80 | 186.80 | 6 | 6 |
+| `backtest_ma` | quant | 2.70 | 3.02 | 12.93 | 12.89 | 20 | 8 |
+| `matmul_200` | quant | 1.51 | n/a | n/a | n/a | 3 | n/a |
+| `loop_sum` | pure-cs | 72.19 | 834.57 | 6.65 | 6.57 | 6 | 7 |
+| `blended_sweep` | blended | 7.04 | 4.85 | 14.95 | 14.76 | 8 | 7 |
 
 ## Compile vs run split (Allie, optimized JIT)
 
 | Workload | Compile (ms) | Run (ms) | Peak mem (KB) |
 |---|---|---|---|
-| `sma_10k` | 1.92 | 226.43 | 16477 |
-| `rolling_std` | 2.15 | 2523.38 | 2719 |
-| `backtest_ma` | 2.56 | 10.51 | 122 |
-| `loop_sum` | 1.57 | 4.83 | 46 |
-| `blended_sweep` | 2.75 | 12.15 | 122 |
+| `sma_10k` | 1.96 | 219.26 | 16479 |
+| `rolling_std` | 1.93 | 184.87 | 2719 |
+| `backtest_ma` | 2.44 | 10.45 | 122 |
+| `loop_sum` | 1.59 | 4.98 | 46 |
+| `blended_sweep` | 2.52 | 12.24 | 122 |
 
 ## Optimizer effect (JIT unopt -> opt)
 
@@ -48,11 +47,11 @@ build was *slower*.
 
 | Workload | Family | Unopt total (ms) | Opt total (ms) | Change |
 |---|---|---|---|---|
-| `sma_10k` | quant | 228.98 | 228.35 | +0.3% |
-| `rolling_std` | quant | 2599.58 | 2525.52 | +2.8% |
-| `backtest_ma` | quant | 13.47 | 13.07 | +3.0% |
-| `loop_sum` | pure-cs | 6.65 | 6.40 | +3.9% |
-| `blended_sweep` | blended | 15.63 | 14.90 | +4.7% |
+| `sma_10k` | quant | 227.00 | 221.21 | +2.5% |
+| `rolling_std` | quant | 194.80 | 186.80 | +4.1% |
+| `backtest_ma` | quant | 12.93 | 12.89 | +0.4% |
+| `loop_sum` | pure-cs | 6.65 | 6.57 | +1.3% |
+| `blended_sweep` | blended | 14.95 | 14.76 | +1.3% |
 
 ## Workloads with no Allie implementation
 

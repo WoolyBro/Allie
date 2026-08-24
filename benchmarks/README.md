@@ -47,8 +47,8 @@ honest reading of it:
 
 **The JIT is dramatically faster than the tree-walking interpreter on
 control-flow-heavy code** — roughly two orders of magnitude on
-`loop_sum`, and about 12x faster than the equivalent hand-written
-Python. That is the strongest performance claim this project can make,
+`loop_sum` (~127x), and about 11x faster than the equivalent
+hand-written Python. That is the strongest performance claim this project can make,
 and the pure-CS workload is the only reason it's visible.
 
 **On the quant workloads, Allie is slower than hand-written Python.**
@@ -68,11 +68,15 @@ programs spend their time inside bridged library calls the passes
 deliberately never touch. Reporting a ~2% number honestly is more useful
 than picking a workload engineered to flatter it.
 
-**`rolling_std` is an outlier for a real reason.**
-`allie.stdlib.series_ops.rolling_std` is a Python loop over the series
-(O(n·window)) where pandas uses a vectorized rolling algorithm. That's a
-concrete stdlib optimization target the benchmark surfaced — and one no
-amount of compiler work on the *language* would close.
+**`rolling_std` was an outlier, and the benchmark is what caught it.**
+It used to run ~112× slower than pandas because the implementation was a
+per-window Python loop (O(n·window)) where pandas is vectorized.
+Rewriting it with `sliding_window_view` cut that to ~9× with
+bit-identical results — no compiler work involved, just a stdlib fix the
+measurement pointed straight at. The faster-still cumulative
+sum-of-squares formula was rejected: it loses ~1e-08 accuracy to
+catastrophic cancellation on exactly the large-mean, small-variance data
+this function is for.
 
 ## Methodology
 

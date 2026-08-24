@@ -168,6 +168,10 @@ class IRLowering:
         self.registers = registers if registers is not None else RegisterAllocator()
         self.register_types: dict[str, Type] = {}
         self._loop_stack: list[tuple[str, str]] = []  # (continue_label, break_label)
+        # Scope stack of source-name -> IR-name, for alpha-renaming
+        # shadowed variables (see _declare_var).
+        self._scopes: list[dict[str, str]] = [{}]
+        self._taken_names: set[str] = set()
 
     def lower_program(self, program: Program) -> IRProgram:
         for stmt in program.statements:
@@ -176,6 +180,45 @@ class IRLowering:
 
     def _emit(self, instr: IRInstr) -> None:
         self.instructions.append(instr)
+
+    # ---- variable scoping (alpha-renaming) ----
+    #
+    # Lowering flattens blocks away, but both the IR interpreter and the
+    # LLVM backend keep ONE name -> value map. Without renaming, a
+    # shadowing `let` inside a block would clobber the outer binding and
+    # never restore it -- so `let x=1; { let x=2; } print(x);` printed 2
+    # on those backends and 1 on the tree-walker.
+    #
+    # Blocks are still visible *here*, so the fix belongs here: a
+    # shadowing declaration gets a fresh, unique IR name, leaving the
+    # flat namespace genuinely unambiguous. Neither backend needed a
+    # change. Names only get suffixed on an actual collision, so ordinary
+    # programs lower to exactly the IR they did before.
+
+    def _push_scope(self) -> None:
+        self._scopes.append({})
+
+    def _pop_scope(self) -> None:
+        self._scopes.pop()
+
+    def _declare_var(self, name: str) -> str:
+        ir_name = name
+        if name in self._taken_names:
+            suffix = 1
+            while f"{name}${suffix}" in self._taken_names:
+                suffix += 1
+            ir_name = f"{name}${suffix}"
+        self._taken_names.add(ir_name)
+        self._scopes[-1][name] = ir_name
+        return ir_name
+
+    def _resolve_var(self, name: str) -> str:
+        for scope in reversed(self._scopes):
+            if name in scope:
+                return scope[name]
+        # Not declared in this lowering unit -- a module-level name seen
+        # from inside a function body, or a builtin. Pass it through.
+        return name
 
     def _resolve_type_annotation(self, annotation: object) -> Type:
         # Mirrors allie.typechecker.checker._resolve_type_annotation --
@@ -199,11 +242,15 @@ class IRLowering:
 
     def _lower_stmt(self, stmt: Stmt) -> None:
         if isinstance(stmt, LetStmt):
+            # Initializer is lowered BEFORE declaring, so
+            # `let x = x + 1;` still reads the outer `x`.
             src = self._lower_expr(stmt.initializer)
-            self._emit(StoreVar(name=stmt.name, src=src))
+            self._emit(StoreVar(name=self._declare_var(stmt.name), src=src))
         elif isinstance(stmt, Block):
+            self._push_scope()
             for s in stmt.statements:
                 self._lower_stmt(s)
+            self._pop_scope()
         elif isinstance(stmt, ExprStmt):
             self._lower_expr(stmt.expression)
         elif isinstance(stmt, IfStmt):
@@ -263,6 +310,9 @@ class IRLowering:
         self._emit(Label(name=end_label))
 
     def _lower_for(self, stmt: ForStmt) -> None:
+        # The loop variable lives in the loop's own scope -- matching
+        # the tree-walker, which gives _exec_for a child Environment.
+        self._push_scope()
         self._lower_stmt(stmt.initializer)
 
         loop_label = self.registers.new_label("for_loop")
@@ -284,6 +334,7 @@ class IRLowering:
         self._lower_expr(stmt.increment)
         self._emit(Jump(label=loop_label))
         self._emit(Label(name=end_label))
+        self._pop_scope()
 
     def _lower_func_decl(self, stmt: FuncDecl) -> None:
         sub_lowering = IRLowering(
@@ -381,7 +432,7 @@ class IRLowering:
         # LLVM bridge has no way to look a variable up by name.
         spec_reg = self._const(f"{stmt.strategy_name}|{stmt.symbol}")
         prices_reg = self.registers.new_reg()
-        self._emit(LoadVar(dest=prices_reg, name=stmt.symbol))
+        self._emit(LoadVar(dest=prices_reg, name=self._resolve_var(stmt.symbol)))
         self.register_types[prices_reg] = PRICE_SERIES
         start_reg = self._const(stmt.start)
         end_reg = self._const(stmt.end)
@@ -435,11 +486,11 @@ class IRLowering:
             return dest
         if isinstance(expr, Identifier):
             dest = self.registers.new_reg()
-            self._emit(LoadVar(dest=dest, name=expr.name))
+            self._emit(LoadVar(dest=dest, name=self._resolve_var(expr.name)))
             return dest
         if isinstance(expr, Assignment):
             src = self._lower_expr(expr.value)
-            self._emit(StoreVar(name=expr.name, src=src))
+            self._emit(StoreVar(name=self._resolve_var(expr.name), src=src))
             return src
         if isinstance(expr, Unary):
             operand = self._lower_expr(expr.operand)

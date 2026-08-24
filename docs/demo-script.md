@@ -67,15 +67,15 @@ Scroll to the LLVM section.
 >
 > Everything runs on three independent backends — tree-walking
 > interpreter, IR interpreter, and the JIT — and they're cross-validated
-> against each other on every test. 500 tests, 92% coverage."
+> against each other on every test. 531 tests, 96% coverage."
 
 ---
 
 ## If they ask questions
 
 **"Is it faster than Python?"**
-> "For control flow, dramatically — about 142× faster than my
-> interpreter and 12× faster than equivalent Python on a loop benchmark.
+> "For control flow, dramatically — about 127× faster than my
+> interpreter and 11× faster than equivalent Python on a loop benchmark.
 > For the quant stuff, no, it's slower, because both end up inside the
 > same numpy calls and I add overhead on top. I measured it rather than
 > guessing, and it's in the README."

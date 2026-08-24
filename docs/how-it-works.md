@@ -241,7 +241,7 @@ the thin Allie wrapper around a `numpy.mean` call can't speed up
 maybe match numpy is a large amount of work for a likely-zero gain.
 
 Meanwhile the part where compilation *does* pay — scalar arithmetic and
-control flow — is fully native, and that's exactly where the 142×
+control flow — is fully native, and that's exactly where the 127×
 speedup shows up (§4).
 
 The honest cost: a user-defined function taking a `Series` parameter
@@ -303,17 +303,18 @@ Full table and methodology in
 
 | Workload | Family | Python | Allie (interp) | Allie (JIT, unopt) | Allie (JIT, opt) | LOC (Py) | LOC (Allie) |
 |---|---|---|---|---|---|---|---|
-| `sma_10k` | quant | 109.66 | 210.07 | 227.93 | 231.02 | 6 | 6 |
-| `rolling_std` | quant | 19.16 | 2505.18 | 2544.98 | 2530.68 | 6 | 6 |
-| `backtest_ma` | quant | 2.69 | 3.02 | 12.42 | 12.40 | 20 | 8 |
-| `loop_sum` | pure-cs | 75.56 | 869.32 | 6.46 | 6.34 | 6 | 7 |
-| `blended_sweep` | blended | 7.28 | 4.89 | 15.00 | 14.55 | 8 | 7 |
+| `sma_10k` | quant | 104.40 | 199.71 | 227.00 | 221.21 | 6 | 6 |
+| `rolling_std` | quant | 21.79 | 197.62 | 194.80 | 186.80 | 6 | 6 |
+| `backtest_ma` | quant | 2.70 | 3.02 | 12.93 | 12.89 | 20 | 8 |
+| `matmul_200` | quant | 1.51 | n/a | n/a | n/a | 3 | n/a |
+| `loop_sum` | pure-cs | 72.19 | 834.57 | 6.65 | 6.57 | 6 | 7 |
+| `blended_sweep` | blended | 7.04 | 4.85 | 14.95 | 14.76 | 8 | 7 |
 
 Three things this shows.
 
 **Compilation is worth a lot for control flow.** `loop_sum` — a plain
-50k-iteration loop, no quant content — goes from 869 ms interpreted to
-6.3 ms JIT-compiled. That's ~142×, and ~12× faster than the equivalent
+50k-iteration loop, no quant content — goes from 835 ms interpreted to
+6.6 ms JIT-compiled. That's ~127×, and ~11× faster than the equivalent
 hand-written Python. This is the number the project actually earns.
 
 **Compilation is worth nothing for library-bound work.** On the quant
@@ -329,9 +330,14 @@ tests prove the transformations fire on hand-built IR; this table shows
 what that's worth on this mix of workloads. Reporting ~2% honestly beats
 constructing a workload that flatters it.
 
-(`rolling_std` being 112× slower is a real, separate finding: our
-implementation is a Python loop where pandas is vectorized. A stdlib
-bug, not a compiler one.)
+(`rolling_std` used to be 112× slower here — a real finding the
+benchmark surfaced, and a separate bug from anything compiler-related:
+the implementation was a per-window Python loop where pandas is
+vectorized. Rewriting it with `sliding_window_view` cut the gap to ~9×
+with bit-identical results. Worth noting the *tempting* fix — cumulative
+sums of `x` and `x²` — was rejected: it's faster still, but loses ~1e-08
+accuracy to catastrophic cancellation on exactly the large-mean,
+small-variance data this function exists to handle.)
 
 ---
 

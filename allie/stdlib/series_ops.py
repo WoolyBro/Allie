@@ -46,7 +46,21 @@ def SMA(series: SeriesValue, window: int) -> SeriesValue:  # noqa: N802 - matche
 
 def EMA(series: SeriesValue, span: int) -> SeriesValue:  # noqa: N802 - matches spec's exact name
     """Exponential moving average, standard smoothing factor
-    alpha = 2/(span+1), seeded with the series' first value."""
+    alpha = 2/(span+1), seeded with the series' first value.
+
+    **This loop is deliberate -- do not "vectorize" it.** EMA is a
+    first-order recurrence (`y[i] = a*x[i] + (1-a)*y[i-1]`), and the
+    closed form that lets numpy do it in one pass,
+    `y[n] = (1-a)**n * cumsum(a*x[i] / (1-a)**i)`, divides by
+    `(1-a)**i`. That underflows to zero for large `i`: measured against
+    a 10,000-element series with span=20, results go non-finite from
+    index 7043 onward. It looks ~9x faster right up until it silently
+    returns garbage on real-length data.
+
+    Unlike `rolling_std` (which had a genuine O(n*window) problem worth
+    fixing), this loop is O(n) and costs ~3 ms per 10,000 elements --
+    not a bottleneck worth trading correctness for.
+    """
     if span <= 0:
         raise AllieValueError(f"EMA: span must be positive, got {span}")
     if len(series) == 0:
@@ -65,13 +79,31 @@ def rolling_mean(series: SeriesValue, window: int) -> SeriesValue:
 
 
 def rolling_std(series: SeriesValue, window: int) -> SeriesValue:
+    """Rolling sample standard deviation (`ddof=1`), NaN-padding the
+    first `window - 1` bars like `SMA`.
+
+    Vectorized with `sliding_window_view`, which builds a strided *view*
+    of every window and lets numpy do the reduction in C. ~190x faster
+    than the per-window Python loop this replaced, and **bit-identical**
+    to it -- same `np.std` call, just applied to all rows at once.
+
+    The obvious O(n) alternative -- cumulative sums of `x` and `x**2`,
+    then `var = (sum2 - sum1**2/w) / (w-1)` -- is another ~4x faster
+    still, and was rejected. On price-like data (mean ~160, std ~2) it
+    loses about 1.7e-08 absolute accuracy to catastrophic cancellation,
+    because it subtracts two large nearly-equal numbers to recover a
+    small one. That is the exact input shape this function exists to
+    handle, so trading correctness for a speedup that no longer matters
+    (the loop was the bottleneck, not the reduction) is a bad deal.
+    """
     if window < 2:
         raise AllieValueError(f"rolling_std: window must be at least 2, got {window}")
     data = series.data
     n = len(data)
     result = np.full(n, np.nan, dtype=np.float64)
-    for i in range(window - 1, n):
-        result[i] = np.std(data[i - window + 1 : i + 1], ddof=1)
+    if window <= n:
+        windows = np.lib.stride_tricks.sliding_window_view(data, window)
+        result[window - 1 :] = np.std(windows, axis=-1, ddof=1)
     return SeriesValue(result)
 
 

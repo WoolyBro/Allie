@@ -75,7 +75,6 @@ from allie.ir.instructions import (
     JumpIfFalse,
     Label,
     LoadConst,
-    LoadSeries,
     LoadVar,
     MemberGet,
     Move,
@@ -313,10 +312,6 @@ class LLVMLowering:
                 self.builder.ret_void()
             else:
                 self.builder.ret(self._read_reg(instr.value))
-        elif isinstance(instr, LoadSeries):
-            raise LLVMLoweringError(
-                "LoadSeries is not emitted by the lowering pass and has no codegen support"
-            )
         else:
             raise LLVMLoweringError(f"unknown IR instruction: {type(instr).__name__}")
 

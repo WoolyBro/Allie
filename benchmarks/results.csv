@@ -1,7 +1,7 @@
 workload,family,python_ms,allie_interp_ms,allie_jit_unopt_ms,allie_jit_opt_ms,allie_compile_ms,allie_run_ms,peak_kb,loc_python,loc_allie
-sma_10k,quant,117.71,216.79,228.98,228.35,1.92,226.43,16477,6,6
-rolling_std,quant,22.60,2578.60,2599.58,2525.52,2.15,2523.38,2719,6,6
-backtest_ma,quant,2.77,3.06,13.47,13.07,2.56,10.51,122,20,8
-matmul_200,quant,1.50,n/a,n/a,n/a,n/a,n/a,n/a,3,n/a
-loop_sum,pure-cs,74.89,910.17,6.65,6.40,1.57,4.83,46,6,7
-blended_sweep,blended,7.20,4.89,15.63,14.90,2.75,12.15,122,8,7
+sma_10k,quant,104.40,199.71,227.00,221.21,1.96,219.26,16479,6,6
+rolling_std,quant,21.79,197.62,194.80,186.80,1.93,184.87,2719,6,6
+backtest_ma,quant,2.70,3.02,12.93,12.89,2.44,10.45,122,20,8
+matmul_200,quant,1.51,n/a,n/a,n/a,n/a,n/a,n/a,3,n/a
+loop_sum,pure-cs,72.19,834.57,6.65,6.57,1.59,4.98,46,6,7
+blended_sweep,blended,7.04,4.85,14.95,14.76,2.52,12.24,122,8,7

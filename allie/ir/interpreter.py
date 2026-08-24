@@ -32,7 +32,6 @@ from allie.ir.instructions import (
     JumpIfFalse,
     Label,
     LoadConst,
-    LoadSeries,
     LoadVar,
     MemberGet,
     Move,
@@ -175,10 +174,6 @@ def run_ir_program(
             pc = label_index[instr.label] if not _truthy(registers[instr.cond]) else pc + 1
         elif isinstance(instr, Return):
             return registers[instr.value] if instr.value is not None else None
-        elif isinstance(instr, LoadSeries):
-            raise AllieValueError(
-                "LoadSeries is not emitted by the lowering pass and has no interpreter support"
-            )
         else:
             raise AllieValueError(f"unknown IR instruction: {type(instr).__name__}")
 

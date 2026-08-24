@@ -333,11 +333,11 @@ def all_workloads() -> list[Workload]:
             name="rolling_std",
             family="quant",
             description=(
-                "rolling_std(20) + mean, 5 repetitions -- only 5 because "
-                "allie.stdlib.series_ops.rolling_std is a Python loop over "
-                "the series (O(n*window)) while pandas uses a vectorized "
-                "rolling algorithm; 50 repetitions took ~23s. The gap this "
-                "workload reports is a real optimization target, not noise."
+                "rolling_std(20) + mean, 5 repetitions. Kept at 5 (rather "
+                "than raised back to 50) because this workload is the one "
+                "that caught rolling_std being a per-window Python loop -- "
+                "50 reps took ~23s before it was vectorized. Leaving the "
+                "count where the regression would show up again."
             ),
             allie_source=_ROLLING_STD_ALLIE,
             python_impl=_rolling_std_python,

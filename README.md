@@ -69,7 +69,7 @@ rest.
 ```bash
 git clone <this-repo> && cd Lang
 make install          # uv sync --group dev
-make test             # 500 tests
+make test             # 531 tests
 ```
 
 ## Running programs
@@ -136,8 +136,8 @@ make bench          # regenerates benchmarks/results.{md,csv}
 make bench-quick    # 2-trial smoke run
 ```
 
-Headline: **the JIT runs loop-heavy code ~142× faster than the
-tree-walking interpreter, and ~12× faster than equivalent hand-written
+Headline: **the JIT runs loop-heavy code ~127× faster than the
+tree-walking interpreter, and ~11× faster than equivalent hand-written
 Python.** On quant workloads Allie is *slower* than Python — both sides
 bottom out in the same numpy calls, and Allie adds front-end overhead on
 top. That trade-off, and why the LOC columns are the more interesting

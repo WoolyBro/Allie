@@ -134,13 +134,35 @@ def run_pipeline(
     return _execute_llvm(main_program, functions, register_types, function_info, debug_ir)
 
 
+def _report_runtime_error(error: BaseException) -> int:
+    """One place every backend funnels runtime failures through.
+
+    `RecursionError` is translated rather than propagated: an Allie
+    function call consumes several Python frames, so deeply-recursive
+    Allie code trips CPython's limit and, without this, dumps a raw
+    Python traceback full of interpreter internals -- bypassing the
+    whole AllieRuntimeError hierarchy the rest of the language reports
+    through. The limit is deliberately *not* raised instead: a higher
+    ceiling trades a catchable exception for a C-stack overflow that
+    takes the process down with no message at all.
+    """
+    if isinstance(error, RecursionError):
+        print(
+            "AllieRuntimeError: recursion too deep -- the call nesting exceeded "
+            "the host interpreter's stack limit",
+            file=sys.stderr,
+        )
+    else:
+        print(error, file=sys.stderr)
+    return 1
+
+
 def _execute_tree(program: object) -> int:
     env = stdlib.create_global_environment()
     try:
         run_program(program, env)  # type: ignore[arg-type]
-    except AllieRuntimeError as error:
-        print(error, file=sys.stderr)
-        return 1
+    except (AllieRuntimeError, RecursionError) as error:
+        return _report_runtime_error(error)
     return 0
 
 
@@ -148,9 +170,8 @@ def _execute_ir(main_program: object, functions: object) -> int:
     env = stdlib.create_global_environment()
     try:
         run_ir_program(main_program, env, functions, stdlib.BUILTINS)  # type: ignore[arg-type]
-    except AllieRuntimeError as error:
-        print(error, file=sys.stderr)
-        return 1
+    except (AllieRuntimeError, RecursionError) as error:
+        return _report_runtime_error(error)
     return 0
 
 
@@ -177,9 +198,8 @@ def _execute_llvm(
 
     try:
         compile_and_run(lowering.module, main_func.name)
-    except AllieRuntimeError as error:
-        print(error, file=sys.stderr)
-        return 1
+    except (AllieRuntimeError, RecursionError) as error:
+        return _report_runtime_error(error)
     return 0
 
 
