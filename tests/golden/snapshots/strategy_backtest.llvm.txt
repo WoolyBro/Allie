@@ -1,0 +1,55 @@
+; ModuleID = "allie_module"
+target triple = "unknown-unknown-unknown"
+target datalayout = ""
+
+define void @"__when_body_MovingAverage_0"()
+{
+entry:
+  %".2" = call i64 @"call_builtin_bridge"(i64 <handle>, i64 0, i64 0, i64 0, i64 0, i64 0)
+  ret void
+}
+
+define void @"__when_body_MovingAverage_1"()
+{
+entry:
+  %".2" = call i64 @"call_builtin_bridge"(i64 <handle>, i64 0, i64 0, i64 0, i64 0, i64 0)
+  ret void
+}
+
+declare i64 @"call_builtin_bridge"(i64 %".1", i64 %".2", i64 %".3", i64 %".4", i64 %".5", i64 %".6")
+
+define void @"__allie_main"()
+{
+entry:
+  %".2" = call i64 @"call_builtin_bridge"(i64 <handle>, i64 <handle>, i64 0, i64 0, i64 0, i64 1)
+  %"AAPL_ptr" = alloca i64
+  store i64 %".2", i64* %"AAPL_ptr"
+  %"r2" = load i64, i64* %"AAPL_ptr"
+  %".4" = call i64 @"member_get_bridge"(i64 %"r2", i64 <handle>)
+  %".5" = call i64 @"box_int"(i64 5)
+  %".6" = call i64 @"call_builtin_bridge"(i64 <handle>, i64 %".4", i64 %".5", i64 0, i64 0, i64 2)
+  %"fast_ptr" = alloca i64
+  store i64 %".6", i64* %"fast_ptr"
+  %"r6" = load i64, i64* %"AAPL_ptr"
+  %".8" = call i64 @"member_get_bridge"(i64 %"r6", i64 <handle>)
+  %".9" = call i64 @"box_int"(i64 20)
+  %".10" = call i64 @"call_builtin_bridge"(i64 <handle>, i64 %".8", i64 %".9", i64 0, i64 0, i64 2)
+  %"slow_ptr" = alloca i64
+  store i64 %".10", i64* %"slow_ptr"
+  %".12" = call i64 @"call_builtin_bridge"(i64 <handle>, i64 <handle>, i64 0, i64 0, i64 0, i64 1)
+  %"r12" = load i64, i64* %"fast_ptr"
+  %"r13" = load i64, i64* %"slow_ptr"
+  %".13" = call i64 @"call_builtin_bridge"(i64 <handle>, i64 <handle>, i64 %"r12", i64 %"r13", i64 0, i64 3)
+  %"r15" = load i64, i64* %"fast_ptr"
+  %"r16" = load i64, i64* %"slow_ptr"
+  %".14" = call i64 @"call_builtin_bridge"(i64 <handle>, i64 <handle>, i64 %"r15", i64 %"r16", i64 0, i64 3)
+  %"r18" = load i64, i64* %"AAPL_ptr"
+  %".15" = call i64 @"box_int"(i64 0)
+  %".16" = call i64 @"box_int"(i64 100)
+  %".17" = call i64 @"call_builtin_bridge"(i64 <handle>, i64 <handle>, i64 %"r18", i64 %".15", i64 %".16", i64 4)
+  ret void
+}
+
+declare i64 @"member_get_bridge"(i64 %".1", i64 %".2")
+
+declare i64 @"box_int"(i64 %".1")

@@ -1,0 +1,119 @@
+[project]
+name = "allie"
+version = "0.1.0"
+description = "A gradually-typed DSL for quantitative trading research, with first-class backtesting semantics."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Ayush Mondal" }]
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.2",
+    "llvmlite>=0.44",
+]
+
+[project.scripts]
+allie = "allie.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.6",
+    "mypy>=1.10",
+    "pre-commit>=3.7",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = [
+    "allie",
+    "allie.lexer",
+    "allie.parser",
+    "allie.ast",
+    "allie.semantic",
+    "allie.typechecker",
+    "allie.ir",
+    "allie.optimizer",
+    "allie.codegen",
+    "allie.runtime",
+    "allie.runtime.interpreter",
+    "allie.runtime.values",
+    "allie.runtime.errors",
+    "allie.stdlib",
+    "allie.quant",
+    "allie.quant.types",
+    "allie.quant.indicators",
+    "allie.quant.backtest",
+    "allie.quant.stats",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.coverage.run]
+# Phase 8.1 listed `--cov=qscript --cov=runtime --cov=stdlib --cov=quant`.
+# Those were four top-level packages in an earlier layout; this repo
+# flattened them all under `allie/` (see ROADMAP's rename entries), so
+# one source root covers exactly the same code -- including
+# `allie/quant/backtest_engine.py`, which the spec called out as needing
+# the same discipline as everything else.
+source = ["allie"]
+
+[tool.coverage.report]
+# Floor, not a target. Current coverage is ~92%; 85 sits meaningfully
+# above the 80 Phase 8.1 suggested while leaving enough headroom that
+# adding one partially-tested module doesn't immediately red the build.
+# Raise it deliberately, don't let it drift down.
+fail_under = 85
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "N"]
+# N818: control-flow signals (Break/Continue/ReturnSignal) are deliberately
+# not named *Error -- they are never surfaced to the user, same precedent
+# as StopIteration in the standard library.
+ignore = ["N818"]
+
+[tool.mypy]
+# 3.12, not 3.11 (our actual minimum -- see requires-python above):
+# numpy's bundled type stubs use PEP 695 `type` statement syntax that
+# mypy only parses under a 3.12+ target. Our own code doesn't use any
+# 3.12-only syntax, so this doesn't mask real 3.11-incompatibilities.
+python_version = "3.12"
+warn_return_any = true
+warn_unused_ignores = true
+disallow_untyped_defs = true
+no_implicit_optional = true
+exclude = ["tests/", "benchmarks/", "examples/"]
+
+[[tool.mypy.overrides]]
+# Both interpreters' binary-op helpers assign promote_numeric's Any-typed
+# result to a fresh local (not the Value-annotated `left`/`right`
+# parameters themselves -- reassigning an annotated parameter keeps mypy
+# holding it to the full Value union, which fails every non-numeric
+# operand check; a plain local narrows to Any instead, matching the
+# runtime behavior). That local's inferred-Any return still triggers
+# warn_return_any against each function's declared `-> Value`; silenced
+# here rather than by scattering `# type: ignore[no-any-return]` at every
+# arithmetic branch.
+module = ["allie.runtime.interpreter", "allie.ir.interpreter"]
+warn_return_any = false
+
+[[tool.mypy.overrides]]
+# llvmlite ships no type stubs / py.typed marker.
+module = "llvmlite.*"
+ignore_missing_imports = true

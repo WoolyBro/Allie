@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Sync dependencies (from uv.lock)
+        run: uv sync --group dev --python ${{ matrix.python-version }}
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
+      - name: Type check (mypy)
+        run: uv run mypy .
+
+      # --cov (no argument) picks up [tool.coverage.run] source and the
+      # fail_under floor from pyproject.toml, so the threshold lives in
+      # one place rather than being duplicated in this workflow.
+      - name: Test (pytest, with coverage floor)
+        run: uv run pytest --cov --cov-report=term-missing

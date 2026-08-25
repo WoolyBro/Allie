@@ -1,0 +1,169 @@
+"""Common subexpression elimination -- Phase 5.4. `run(program) ->
+IRProgram`, pure function, no shared state with the other passes.
+
+A forward pass maintaining three caches, all keyed by *resolved*
+register names (register aliases from an earlier elimination are
+substituted in before any cache lookup, via `resolve()`):
+
+- `const_cache`: `(type, value) -> register` for `LoadConst` -- a second
+  `LoadConst` of the identical literal aliases the first. Keyed by
+  `(type(value), value)`, not just `value`, so `LoadConst(1)` (Int) and
+  `LoadConst(1.0)` (Float) don't collide just because `1 == 1.0` in
+  Python.
+- `var_reg_cache`: `variable name -> register currently holding its
+  up-to-date value` -- updated on every fresh `LoadVar` *and* every
+  `StoreVar`. This is what makes reassignment correctly invalidate CSE:
+  after `StoreVar prices, r6`, `var_reg_cache["prices"]` becomes `r6`, so
+  the *next* `LoadVar` of `prices` resolves to `r6` (not whatever
+  register held the old value) -- which means a `BinOp`/`Call` cache key
+  built from that later `LoadVar` naturally differs from one built
+  before the reassignment, with no separate "clear the whole cache on
+  any StoreVar" step needed.
+- `expr_cache` / `call_cache`: `(op, left, right) -> register` and
+  `(fn_name, args) -> register`, the literal cases from the spec. Calls
+  are only cached when `fn_name` is in
+  `allie.optimizer.pure_functions.PURE_FUNCTIONS` -- `print`/`load`/
+  `normal`/`buy`/`sell` (impure) are never collapsed, imported from that
+  single shared location rather than redefined here (see that module's
+  docstring for why `dce.py` and this file must not be able to disagree
+  about what's pure).
+
+**A control-flow-join bug this found, not something the spec called
+out.** Every `Label` invalidates `var_reg_cache`/`expr_cache`/
+`call_cache` (not `const_cache` -- a literal's value is path-independent).
+Without this, a naive linear scan happily "reused" a pre-loop `LoadVar`'s
+register for a read *inside* the loop body, because nothing in a single
+forward pass distinguishes "this is the same static instruction running
+again on iteration 2" from "this is genuinely still the same value" --
+verified the hard way, by lowering+optimizing an actual `for` loop
+(`total = total + i` inside a loop) and watching the optimized IR compute
+the wrong answer because `total` and `i`'s reads got aliased to each
+other's since-stale pre-loop constant. The same reasoning applies to an
+`if`/`else` join: the `end_label` is reached having executed only one
+branch, so a cache entry from either branch is not trustworthy there
+either. This is the CSE-side analogue of the loop-carried-liveness trap
+DCE's module docstring documents -- same root cause (a flat, CFG-less
+instruction list, per allie/ir/instructions.py), different pass.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from allie.ir.instructions import (
+    BinOp,
+    Call,
+    IRInstr,
+    IRProgram,
+    JumpIfFalse,
+    Label,
+    LoadConst,
+    LoadVar,
+    MemberGet,
+    Move,
+    Return,
+    StoreVar,
+    UnaryOp,
+)
+from allie.optimizer.pure_functions import PURE_FUNCTIONS
+
+
+def run(program: IRProgram) -> IRProgram:
+    reg_alias: dict[str, str] = {}
+    const_cache: dict[tuple[type, Any], str] = {}
+    var_reg_cache: dict[str, str] = {}
+    expr_cache: dict[tuple[str, str, str], str] = {}
+    call_cache: dict[tuple[str, tuple[str, ...]], str] = {}
+
+    def resolve(reg: str) -> str:
+        return reg_alias.get(reg, reg)
+
+    kept: list[IRInstr] = []
+
+    for instr in program.instructions:
+        if isinstance(instr, Label):
+            # A Label is a control-flow join point: a loop's back-edge
+            # lands here on iteration 2+ with variables the loop body
+            # already reassigned, and an if/else's end_label is reached
+            # having run only ONE of the two branches. Either way, a
+            # var_reg_cache/expr_cache/call_cache entry established
+            # before this point can't be trusted after it -- this flat,
+            # CFG-less IR (allie/ir/instructions.py's module docstring)
+            # gives CSE no way to know structurally, so the safe, simple
+            # answer is to invalidate all three at every Label. const_cache
+            # is the one exception: a literal's value never changes
+            # regardless of which path was taken, so constants stay
+            # shared across a join safely.
+            var_reg_cache.clear()
+            expr_cache.clear()
+            call_cache.clear()
+            kept.append(instr)
+            continue
+
+        if isinstance(instr, LoadConst):
+            const_key = (type(instr.value), instr.value)
+            if const_key in const_cache:
+                reg_alias[instr.dest] = const_cache[const_key]
+                continue
+            const_cache[const_key] = instr.dest
+            kept.append(instr)
+
+        elif isinstance(instr, LoadVar):
+            if instr.name in var_reg_cache:
+                reg_alias[instr.dest] = var_reg_cache[instr.name]
+                continue
+            var_reg_cache[instr.name] = instr.dest
+            kept.append(instr)
+
+        elif isinstance(instr, StoreVar):
+            src = resolve(instr.src)
+            var_reg_cache[instr.name] = src
+            kept.append(StoreVar(name=instr.name, src=src))
+
+        elif isinstance(instr, BinOp):
+            left = resolve(instr.left)
+            right = resolve(instr.right)
+            expr_key = (instr.op, left, right)
+            if expr_key in expr_cache:
+                reg_alias[instr.dest] = expr_cache[expr_key]
+                continue
+            expr_cache[expr_key] = instr.dest
+            kept.append(BinOp(dest=instr.dest, op=instr.op, left=left, right=right))
+
+        elif isinstance(instr, Call) and instr.fn_name in PURE_FUNCTIONS:
+            args = tuple(resolve(a) for a in instr.args)
+            call_key = (instr.fn_name, args)
+            if instr.dest is not None and call_key in call_cache:
+                reg_alias[instr.dest] = call_cache[call_key]
+                continue
+            if instr.dest is not None:
+                call_cache[call_key] = instr.dest
+            kept.append(Call(dest=instr.dest, fn_name=instr.fn_name, args=list(args)))
+
+        elif isinstance(instr, UnaryOp):
+            kept.append(UnaryOp(dest=instr.dest, op=instr.op, operand=resolve(instr.operand)))
+
+        elif isinstance(instr, Call):
+            kept.append(
+                Call(dest=instr.dest, fn_name=instr.fn_name, args=[resolve(a) for a in instr.args])
+            )
+
+        elif isinstance(instr, MemberGet):
+            kept.append(MemberGet(dest=instr.dest, obj=resolve(instr.obj), field=instr.field))
+
+        elif isinstance(instr, Move):
+            kept.append(Move(dest=instr.dest, src=resolve(instr.src)))
+
+        elif isinstance(instr, JumpIfFalse):
+            kept.append(JumpIfFalse(cond=resolve(instr.cond), label=instr.label))
+
+        elif isinstance(instr, Return):
+            kept.append(
+                Return(value=resolve(instr.value) if instr.value is not None else None)
+            )
+
+        else:
+            # Label, Jump have no register operands to resolve.
+            kept.append(instr)
+
+    return IRProgram(instructions=kept)
