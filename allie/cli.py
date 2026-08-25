@@ -28,6 +28,8 @@ share `run_pipeline` below:
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import sys
 from pathlib import Path
 
@@ -40,8 +42,10 @@ from allie.ir.lowering import lower_program
 from allie.lexer.lexer import Lexer
 from allie.optimizer import constant_fold, cse, dce, run_passes
 from allie.parser.parser import Parser
+from allie.quant.backtest_engine import reset_strategy_registry
 from allie.runtime.errors import AllieRuntimeError
 from allie.runtime.interpreter import run_program
+from allie.semantic.lookahead import check_lookahead
 from allie.semantic.resolver import Resolver
 from allie.typechecker.checker import TypeChecker
 from allie.typechecker.errors import QSTypeError
@@ -59,6 +63,7 @@ def run_pipeline(
     debug_ast: bool = False,
     debug_ir: bool = False,
     optimize: bool = True,
+    verify: bool = False,
 ) -> int:
     """Runs `source_path` end to end. Returns a process exit code."""
     if not source_path.exists():
@@ -105,6 +110,18 @@ def run_pipeline(
         print(error, file=sys.stderr)
         return 1
 
+    # Look-ahead analysis runs last among the static passes: it reads
+    # `inferred_type` annotations the checker just wrote, and there is no
+    # point reporting a data-provenance problem in a program that does
+    # not type-check.
+    check_lookahead(program, diagnostics)
+    if diagnostics.has_errors():
+        diagnostics.print_all()
+        return 1
+
+    if verify:
+        return _execute_verified(program, optimize=optimize)
+
     if backend == "tree" and not debug_ir:
         # The tree-walking interpreter runs straight off the AST -- no
         # IR lowering needed unless --debug-ir asked to see it.
@@ -132,6 +149,82 @@ def run_pipeline(
     if backend == "ir":
         return _execute_ir(main_program, functions)
     return _execute_llvm(main_program, functions, register_types, function_info, debug_ir)
+
+
+def _run_capturing(program: object, backend: str, *, optimize: bool) -> tuple[int, str]:
+    """Runs `program` on one backend with stdout captured, returning
+    `(exit_code, output)`. A backend that cannot compile the program at
+    all reports that as its output rather than raising, so `--verify`
+    can distinguish "disagreed" from "could not run"."""
+    reset_strategy_registry()
+    buffer = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buffer):
+            if backend == "tree":
+                code = _execute_tree(program)
+            else:
+                main_program, functions, register_types, function_info = lower_program(
+                    program  # type: ignore[arg-type]
+                )
+                passes = _DEFAULT_PASSES if optimize else []
+                main_program = run_passes(main_program, passes, enabled=optimize)
+                functions = {
+                    name: (run_passes(prog, passes, enabled=optimize), params)
+                    for name, (prog, params) in functions.items()
+                }
+                if backend == "ir":
+                    code = _execute_ir(main_program, functions)
+                else:
+                    code = _execute_llvm(
+                        main_program, functions, register_types, function_info, False
+                    )
+    except Exception as error:  # noqa: BLE001 -- surfaced in the report below
+        return 1, f"<{type(error).__name__}: {error}>"
+    return code, buffer.getvalue()
+
+
+def _execute_verified(program: object, *, optimize: bool) -> int:
+    """Runs the program on all three backends and only reports results
+    if they agree.
+
+    The three backends (tree-walking, IR interpreter, LLVM/JIT) are
+    independent implementations that share a front end but no execution
+    logic. The test suite already cross-validates them; `--verify`
+    turns that into a property of a *user's own* run: a backtest number
+    that three separately-written evaluators agree on is much harder to
+    get wrong than one that a single implementation happened to produce.
+
+    Disagreement is a hard failure, not a warning. If the backends do
+    not agree, at least one of them is wrong, and there is no principled
+    way to pick a winner -- reporting any of the numbers would be
+    reporting a number known to be untrustworthy.
+    """
+    results = [
+        (backend, *_run_capturing(program, backend, optimize=optimize))
+        for backend in BACKENDS
+    ]
+    outputs = {output for _, _, output in results}
+    codes = {code for _, code, _ in results}
+
+    if len(outputs) == 1 and len(codes) == 1:
+        print(results[0][2], end="")
+        exit_code = results[0][1]
+        status = "verified" if exit_code == 0 else "verified (all backends failed identically)"
+        print(f"[{status}: {', '.join(BACKENDS)} agree]", file=sys.stderr)
+        return exit_code
+
+    print("error: VERIFICATION FAILED -- backends disagree", file=sys.stderr)
+    print(
+        "  Three independent implementations produced different results, so at "
+        "least one is wrong.\n"
+        "  Refusing to report a result that cannot be trusted.",
+        file=sys.stderr,
+    )
+    for backend, code, output in results:
+        rendered = output if output.strip() else "<no output>"
+        indented = "\n".join(f"      {line}" for line in rendered.rstrip("\n").split("\n"))
+        print(f"\n  --- {backend} (exit {code}) ---\n{indented}", file=sys.stderr)
+    return 1
 
 
 def _report_runtime_error(error: BaseException) -> int:
@@ -240,6 +333,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_false",
         help="Skip the IR optimizer passes",
     )
+    run.add_argument(
+        "--verify",
+        action="store_true",
+        help=(
+            "Run on all three backends and refuse to report results unless "
+            "they agree (overrides --backend)"
+        ),
+    )
     run.add_argument("--trace", action="store_true", help="Print interpreter execution trace")
 
     return parser
@@ -257,6 +358,7 @@ def main(argv: list[str] | None = None) -> int:
             debug_ast=args.debug_ast,
             debug_ir=args.debug_ir,
             optimize=args.optimize,
+            verify=args.verify,
         )
 
     parser.print_help()

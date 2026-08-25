@@ -47,6 +47,13 @@ PURE_FUNCTIONS: frozenset[str] = frozenset(
         # deterministic functions of two series, no I/O, no state.
         "crosses_above",
         "crosses_below",
+        # Significance testing. permutation_pvalue is pure despite
+        # sampling: it takes an explicit seed, so the same arguments
+        # always give the same p-value (docs/spec.md "Determinism").
+        "bonferroni",
+        "benjamini_hochberg",
+        "sharpe",
+        "permutation_pvalue",
     }
 )
 

@@ -176,6 +176,43 @@ catastrophic cancellation on price-like data. `EMA` remains a Python
 loop on purpose — it is a first-order recurrence whose vectorized
 closed form overflows to non-finite values on long series.
 
+### Significance testing
+
+Multiple-comparisons correction, so a window sweep can be reported
+honestly. `docs/spec.md` treats this as structural rather than optional:
+reporting the best Sharpe across N strategies without correcting for N
+is p-hacking by construction.
+
+| Signature | |
+|---|---|
+| `bonferroni(Float, Int) -> Float` | adjusted p-value, `min(1, p*n)` |
+| `benjamini_hochberg(Series<Float>, Float) -> Series<Bool>` | FDR control; True where rejected |
+| `sharpe(Series<Float>, Int) -> Float` | annualized, risk-free rate 0 |
+| `permutation_pvalue(Series<Float>, Series<Float>, Int, Int) -> Float` | `(signal, returns, trials, seed)` |
+
+```allie
+let raw: Float = permutation_pvalue(signal, returns, 499, 20260825);
+print(bonferroni(raw, 5));   // corrected for having tried 5 windows
+```
+
+**Edge cases.** `permutation_pvalue` shuffles the *signal*, not the
+returns — permuting returns leaves the Sharpe ratio unchanged (mean and
+std are order-invariant), which would make the test vacuous. Its
+p-value can never be exactly 0: the estimator is
+`(1 + hits) / (1 + trials)`, so `trials = 999` floors at 0.001 rather
+than claiming certainty no finite sample supports. The seed is explicit
+— no hidden global RNG (`docs/spec.md` "Determinism"). Both paired
+functions drop index pairs where either side is non-finite, so indicator
+warmup padding doesn't silently produce a NaN p-value.
+
+`sharpe` delegates to the backtest engine's own definition, so a Sharpe
+computed in source is directly comparable to one from a `backtest`
+block. A return series that is constant up to float noise gives 0.0
+rather than a spurious enormous ratio.
+
+`benjamini_hochberg` is a *step-up* procedure: it rejects all of the k
+smallest p-values, not only those individually under the line.
+
 ### Matrix
 
 | Signature | |
@@ -260,6 +297,30 @@ support them unchanged if that ever changes.
 <!-- END GENERATED KEYWORDS -->
 
 ---
+
+## Look-ahead bias analysis
+
+A `when` clause operand must be provably free of future data. A series
+derived from `shift(s, k)` with a negative `k` — which places bar `i+k`
+at bar `i` — is rejected at compile time, along with anything derived
+from it through indicators, variables, or user functions.
+
+```allie
+let tomorrow: Series[Float] = shift(AAPL.close, -1);
+strategy S { when tomorrow crosses_above slow: buy(); }   // compile error
+```
+
+The sink is only `when`, deliberately: look-ahead bias is *deciding* at
+time t on data from after t, not touching future data at all.
+`print(mean(shift(x, -1)))` is legitimate post-hoc analysis and stays
+legal.
+
+The analysis is biased toward false positives, because a missed
+violation is a silently wrong backtest while a spurious one is a visible
+compile error. A `shift` whose period is not a literal is rejected — the
+pass cannot prove it non-negative, so it doesn't pretend to. It cannot
+detect data that was already shifted *outside* the language, e.g. a
+pre-shifted CSV column.
 
 ## Known limitations
 

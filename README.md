@@ -10,6 +10,17 @@ they lower to the same IR. It also accepts a second spelling for every
 control-flow keyword (`ts` for `let`, `Ahhh` for `while`), which is a
 joke, but a joke implemented as one lookup table rather than a hack.
 
+Three things it does that a backtesting *library* structurally cannot:
+
+- **Look-ahead bias is a compile error.** A strategy whose signal is
+  derived from future data fails to compile — see below.
+- **Multiple-comparisons correction is built in.** `bonferroni`,
+  `benjamini_hochberg`, and a seeded `permutation_pvalue` are stdlib
+  functions, so correcting a window sweep is a one-liner instead of an
+  intention.
+- **`--verify` cross-checks three independent backends** and refuses to
+  report a result they disagree on.
+
 ```allie
 let AAPL = load("tests/fixtures/AAPL_sample.csv");
 
@@ -79,13 +90,45 @@ allie run examples/blended.qs                    # tree-walking interpreter
 allie run examples/blended.qs --backend ir       # IR interpreter
 python main.py examples/blended.qs               # LLVM + MCJIT
 
+# Run on all three and refuse to report unless they agree
+allie run examples/blended.qs --verify
+
 # Debug flags (independent, combinable)
 python main.py examples/blended.qs --debug-tokens --debug-ast --debug-ir --no-optimize
 ```
 
 There are **three independent execution backends**, and they're
 cross-validated against each other on every test program — same source,
-same output, or the build fails.
+same output, or the build fails. `--verify` exposes that as a property
+of *your* run: a number three separately-written evaluators agree on is
+much harder to get wrong than one a single implementation produced.
+
+## Look-ahead bias is a compile error
+
+`shift(s, -1)[i]` is `s[i+1]` — tomorrow's price, available today. Feed
+that into a trading signal and the backtest reports Sharpe 3.34 / CAGR
++41.56%, against the honest strategy's −0.16 / −2.89%. Every number is
+meaningless and nothing says so.
+
+```allie
+let tomorrow: Series[Float] = shift(AAPL.close, -1);
+strategy Clairvoyant {
+    when tomorrow crosses_above slow: buy();
+}
+```
+
+```
+error: look-ahead bias: the left operand of this 'when' clause in strategy
+'Clairvoyant' may contain data from a future bar. A trading decision cannot
+depend on data the strategy would not have had at that bar. 'tomorrow' is
+derived from a backwards time shift. (9:10)
+```
+
+A taint analysis (`allie/semantic/lookahead.py`) tracks future-derived
+data through variables, indicator calls, and user functions, and rejects
+it at the one place a *trading decision* gets made. Using future data for
+post-hoc analysis stays legal — the bias is deciding on it, not touching
+it.
 
 ## Architecture
 

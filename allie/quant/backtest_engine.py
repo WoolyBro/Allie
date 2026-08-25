@@ -239,6 +239,43 @@ class BacktestEngine:
         )
 
 
+def effective_std(returns: np.ndarray) -> float:
+    """Sample standard deviation (`ddof=1`), rounded down to exactly 0
+    when it is only float noise.
+
+    `np.std` of a *constant* series is not exactly zero -- float64 has
+    about 1e-16 of relative precision, so accumulated rounding leaves
+    something like 1e-18 behind. Testing `std > 0` therefore passes for
+    a series with no real variance at all, and dividing by 1e-18
+    produced a **Sharpe ratio of 1.6e15** for a strategy with perfectly
+    steady growth. That number went straight into the results table.
+
+    The threshold is relative to the magnitude of the data rather than
+    absolute, so it behaves the same for returns quoted as 0.01 or as
+    1%. 1e-12 sits far above float64's noise floor and far below any
+    real signal.
+    """
+    if len(returns) < 2:
+        return 0.0
+    std = float(np.std(returns, ddof=1))
+    scale = float(np.max(np.abs(returns)))
+    return 0.0 if std <= scale * 1e-12 else std
+
+
+def annualized_sharpe(returns: np.ndarray, periods_per_year: int) -> float:
+    """Annualized Sharpe ratio, risk-free rate 0.
+
+    The single definition -- `compute_metrics` and the `sharpe` builtin
+    (allie.stdlib.significance) both call this, so a Sharpe computed in
+    Allie source is guaranteed comparable to one from a `backtest`
+    block rather than merely intended to be.
+    """
+    std = effective_std(returns)
+    if std == 0.0:
+        return 0.0
+    return float(np.mean(returns)) / std * math.sqrt(periods_per_year)
+
+
 def compute_metrics(
     equity_curve: list[float],
     *,
@@ -261,16 +298,9 @@ def compute_metrics(
     years = len(equity) / periods_per_year
     cagr = (final / initial) ** (1.0 / years) - 1.0 if years > 0 and initial > 0 else 0.0
 
-    if len(returns) > 1:
-        std = float(np.std(returns, ddof=1))
-        mean = float(np.mean(returns))
-    else:
-        std = 0.0
-        mean = 0.0
-
-    volatility = std * math.sqrt(periods_per_year)
+    volatility = effective_std(returns) * math.sqrt(periods_per_year)
     # Risk-free rate = 0 for v1 -- see this module's docstring.
-    sharpe = (mean / std) * math.sqrt(periods_per_year) if std > 0 else 0.0
+    sharpe = annualized_sharpe(returns, periods_per_year)
 
     running_peak = np.maximum.accumulate(equity)
     drawdowns = (running_peak - equity) / running_peak

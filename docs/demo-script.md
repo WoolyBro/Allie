@@ -55,7 +55,28 @@ Scroll to the LLVM section.
 > one place it calls back into Python, for the numpy-backed series
 > functions."
 
-## 0:45–1:00 — The best bug, then close
+## 0:45–1:00 — The part nobody else has, then close
+
+Have `/tmp/cheat.qs` ready (a strategy using `shift(close, -1)`).
+
+Run: `allie run cheat.qs`
+
+> "This strategy peeks one bar into the future — `shift(close, -1)` is
+> tomorrow's price, available today. Before I added a check for it, this
+> compiled fine and backtested at Sharpe 3.3 while the honest version
+> scored minus 0.16. Nothing anywhere said the number was garbage. Now
+> it's a compile error: there's a taint analysis that tracks
+> future-derived data through variables and indicators and refuses to
+> let it reach a trading decision. That's the most common silent bug in
+> backtesting, and it's a type error here."
+
+Optional, if time: `allie run examples/rigor.qs`
+
+> "And this corrects a window sweep for multiple comparisons — window 10
+> looks significant at p=0.02 until you admit you tried five windows,
+> then it's 0.11 and it isn't."
+
+## If you have longer — the best bug
 
 > "The thing I'd point to as most interesting: my dead-code elimination
 > pass had a real bug. It removed the loop-increment variable, because

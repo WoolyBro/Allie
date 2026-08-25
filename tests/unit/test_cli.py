@@ -159,3 +159,85 @@ def test_legacy_dump_flags_still_work() -> None:
     would break anything written against the older interface."""
     args = build_parser().parse_args(["run", "f.qs", "--dump-tokens", "--dump-ast"])
     assert args.debug_tokens and args.debug_ast
+
+
+# ---- --verify: three-backend agreement as a user-facing guarantee ----
+
+
+def test_verify_passes_when_backends_agree(
+    program: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert run_pipeline(program, verify=True) == 0
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "3"
+    assert "verified" in captured.err
+    for backend in BACKENDS:
+        assert backend in captured.err
+
+
+def test_verify_reports_output_exactly_once(
+    program: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Three backends run, but the user sees one result -- not three
+    copies of it."""
+    run_pipeline(program, verify=True)
+    assert capsys.readouterr().out.count("3") == 1
+
+
+def test_verify_agrees_on_a_shared_failure(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """All three failing identically is agreement, not disagreement --
+    but the exit code must still be nonzero."""
+    path = _write(tmp_path, "let x: Int = 1 / 0;\nprint(x);\n")
+    assert run_pipeline(path, verify=True) == 1
+    assert "verified" in capsys.readouterr().err
+
+
+def test_verify_catches_a_divergence_and_refuses_to_report(
+    program: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The behaviour the flag exists for. A backend is monkeypatched to
+    lie, and --verify must refuse rather than pick a winner."""
+    import allie.cli as cli_module
+
+    real = cli_module._run_capturing
+
+    def lying(program_arg: object, backend: str, *, optimize: bool):  # noqa: ANN202
+        code, output = real(program_arg, backend, optimize=optimize)
+        return (code, "999\n") if backend == "llvm" else (code, output)
+
+    monkeypatch.setattr(cli_module, "_run_capturing", lying)
+
+    assert run_pipeline(program, verify=True) == 1
+    captured = capsys.readouterr()
+    assert "VERIFICATION FAILED" in captured.err
+    assert "Refusing to report" in captured.err
+    # The report must show each backend's result so the user can see
+    # *how* they differ, not merely that they did.
+    for backend in BACKENDS:
+        assert backend in captured.err
+    assert "999" in captured.err
+    # And the untrustworthy result must not reach stdout.
+    assert captured.out == ""
+
+
+def test_verify_survives_a_backend_that_cannot_compile(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A user function taking a Series is rejected by the LLVM backend
+    but runs on the other two. --verify must report that as a
+    disagreement rather than crashing."""
+    path = _write(
+        tmp_path,
+        "func total(xs: Series[Float]) -> Float { return mean(xs); }\n"
+        "print(total([1.0, 2.0, 3.0]));\n",
+    )
+    assert run_pipeline(path, verify=True) == 1
+    assert "VERIFICATION FAILED" in capsys.readouterr().err
+
+
+def test_verify_flag_is_exposed_on_the_cli() -> None:
+    args = build_parser().parse_args(["run", "f.qs", "--verify"])
+    assert args.verify is True
+    assert build_parser().parse_args(["run", "f.qs"]).verify is False

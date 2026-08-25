@@ -56,6 +56,34 @@ from allie.ir.instructions import (
     UnaryOp,
 )
 
+_TRAPPING_OPS = frozenset({"/", "%"})
+
+
+def _can_trap(instr: IRInstr, instructions: list[IRInstr]) -> bool:
+    """Whether removing `instr` could delete an observable side effect.
+
+    Raising is a side effect. `let x: Int = 1 / 0;` where `x` is never
+    read still has to raise "division by zero" -- deleting the division
+    because its result is unused changes the program's behaviour from
+    "fails" to "succeeds silently", which is strictly worse than the
+    missed optimization.
+
+    Found by `allie run --verify`: with the optimizer on, the tree-walker
+    raised while the IR and LLVM backends exited 0, because only they run
+    this pass. That is exactly the class of divergence three-backend
+    cross-validation exists to catch.
+
+    A divisor that is a literal non-zero constant cannot trap, so those
+    stay removable -- otherwise every `x / 2` in dead code would be
+    pinned for no reason.
+    """
+    if not isinstance(instr, BinOp) or instr.op not in _TRAPPING_OPS:
+        return False
+    for candidate in instructions:
+        if isinstance(candidate, LoadConst) and candidate.dest == instr.right:
+            return bool(candidate.value == 0)
+    return True  # divisor not a known constant -- must assume it can be zero
+
 
 def run(program: IRProgram) -> IRProgram:
     # Fixpoint, not a single pass: removing a dead StoreVar can make the
@@ -74,7 +102,7 @@ def run(program: IRProgram) -> IRProgram:
                     changed = True
                     continue  # dead: this variable is never read anywhere
             elif isinstance(instr, (LoadConst, LoadVar, BinOp, UnaryOp, MemberGet, Move)):
-                if instr.dest not in read_regs:
+                if instr.dest not in read_regs and not _can_trap(instr, instructions):
                     changed = True
                     continue  # dead: this register is never read anywhere
             # Call, Label, Jump, JumpIfFalse, Return always survive.

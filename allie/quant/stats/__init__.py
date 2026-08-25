@@ -1,8 +1,14 @@
-"""Statistical rigor tooling: walk-forward/out-of-sample splitting and
-multiple-comparisons correction (Bonferroni, permutation/Monte Carlo null).
+"""Statistical rigor tooling (docs/spec.md "Statistical rigor").
 
-This exists so evaluating the 5 target indicators doesn't p-hack the
-paper's central claim by construction (docs/spec.md "Statistical rigor").
-All stochastic functions here take an explicit seed (docs/spec.md
-"Determinism") — no hidden global RNG state.
+The multiple-comparisons correction and permutation testing this module
+was reserved for now live in `allie.stdlib.significance`, alongside the
+rest of the registered builtins -- `bonferroni`, `benjamini_hochberg`,
+`sharpe`, and `permutation_pvalue`. They are registered there rather
+than here because every Allie-callable function goes through
+`allie.stdlib.registry`, and splitting the implementation from its
+registration would mean two places to look.
+
+Walk-forward / out-of-sample splitting is still unbuilt -- it needs a
+way to express a date range in source, which the language does not have
+yet (`Date`/`DateRange` parse but nothing produces one).
 """

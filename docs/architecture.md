@@ -116,6 +116,31 @@ sometimes is harder to use than none.
 **Does not:** allow truthiness. Conditions must be exactly `Bool` —
 `if 1 { }` is an error, not a shorthand.
 
+## Look-ahead analysis (`allie/semantic/lookahead.py`)
+
+**Does:** a taint analysis over `Series` values. Data derived from a
+backwards time shift is tracked through variables, indicator calls, and
+user functions, and rejected where a `when` clause turns it into a
+trading decision.
+
+**Why:** `docs/spec.md`'s founding claim is that the language should
+make "you cannot see the future" structural rather than a discipline the
+author maintains. The backtest engine already enforced that at runtime —
+`buy()`/`sell()` can only read `close[current_index]` — but that
+constrains the *engine*, not the *data* handed to it. A strategy built
+on `shift(close, -1)` compiled fine and backtested at Sharpe 3.34 while
+the honest version scored −0.16. This pass closes the gap the runtime
+guarantee never covered.
+
+**Does not:** flag future data used outside a `when` clause. The bias is
+deciding on future data, not touching it; post-hoc analysis is
+legitimate. It also cannot see data pre-shifted outside the language.
+
+**Design decision — unprovable means rejected.** A `shift` whose period
+is not a literal is treated as unsafe. For a safety property, "cannot
+prove safe" has to mean "reject": a false positive is a compile error
+the user can see and fix, a false negative is a silently wrong backtest.
+
 ## IR lowering (`allie/ir/`)
 
 **Does:** flattens the AST into a linear instruction list over virtual
@@ -159,6 +184,13 @@ read anywhere in the program", not "read after this point" — strictly
 more conservative, but immune to the loop back-edge trap that a naive
 forward scan falls into. CSE invalidates its caches at every label, for
 the same reason from the other direction.
+
+**Does not:** remove a division or modulo whose divisor isn't a known
+non-zero constant, even when the result is unused. Raising is an
+observable side effect: `let x: Int = 1 / 0;` with `x` never read still
+has to fail. This was found by `--verify` — with the optimizer on, the
+tree-walker raised while the IR and LLVM backends exited 0, because only
+they run this pass.
 
 ## Backends
 
