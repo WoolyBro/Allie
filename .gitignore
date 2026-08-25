@@ -45,3 +45,8 @@ benchmarks/results/
 # Generated benchmark dataset -- reproducible from a fixed seed via
 # benchmarks.workloads.ensure_benchmark_data(), so not worth committing.
 benchmarks/data/
+
+# Local backup archives -- these balloon the repo (a full-tree zip
+# including .venv/.mypy_cache/.pytest_cache is 100MB+) and add nothing
+# git history doesn't already give you.
+*.zip

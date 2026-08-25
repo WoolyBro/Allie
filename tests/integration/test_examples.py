@@ -23,16 +23,27 @@ from allie.cli import run_pipeline
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _EXAMPLES = _REPO_ROOT / "examples"
 
+# Examples that exist to demonstrate a *rejection*, not a successful run --
+# excluded from "every example runs clean" and checked by their own test
+# below instead. Named explicitly (not glob-excluded by a naming
+# convention) so a new negative example has to be a deliberate addition
+# to both lists, not something that silently slips through either test.
+_EXPECTED_TO_FAIL = {"cheat_demo": "look-ahead bias"}
+
 
 def _example_paths() -> list[Path]:
     return sorted(_EXAMPLES.glob("*.qs"))
+
+
+def _runnable_example_paths() -> list[Path]:
+    return [p for p in _example_paths() if p.stem not in _EXPECTED_TO_FAIL]
 
 
 def test_examples_directory_is_not_empty() -> None:
     assert _example_paths(), "no examples found -- did the glob pattern change?"
 
 
-@pytest.mark.parametrize("path", _example_paths(), ids=lambda p: p.stem)
+@pytest.mark.parametrize("path", _runnable_example_paths(), ids=lambda p: p.stem)
 def test_example_runs_clean(path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     previous = Path.cwd()
     os.chdir(_REPO_ROOT)
@@ -52,3 +63,29 @@ def test_no_stale_ql_examples_remain() -> None:
     hello_world.ql survived broken for six phases."""
     stale = sorted(p.name for p in _EXAMPLES.glob("*.ql"))
     assert not stale, f"examples still using the old .ql extension: {stale}"
+
+
+@pytest.mark.parametrize("stem,expected_reason", sorted(_EXPECTED_TO_FAIL.items()))
+def test_negative_example_fails_for_its_stated_reason(
+    stem: str, expected_reason: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Guards the other half of `_EXPECTED_TO_FAIL`: a negative example
+    must still fail, and for the reason it's there to demonstrate --
+    not pass by accident after an unrelated change, and not fail with
+    an unrelated error that would make the demo confusing to run."""
+    path = _EXAMPLES / f"{stem}.qs"
+    previous = Path.cwd()
+    os.chdir(_REPO_ROOT)
+    try:
+        exit_code = run_pipeline(path, backend="tree")
+    finally:
+        os.chdir(previous)
+
+    assert exit_code != 0, f"{stem}.qs was expected to fail but exited 0"
+    captured = capsys.readouterr()
+    # Diagnostics from DiagnosticBag.print_all() (parser/resolver/
+    # lookahead) go to stdout, matching every other collect-and-report
+    # pass in the pipeline; a QSTypeError or AllieRuntimeError instead
+    # prints to stderr -- check both so this doesn't depend on which
+    # stage happens to reject the program.
+    assert expected_reason in (captured.out + captured.err)
