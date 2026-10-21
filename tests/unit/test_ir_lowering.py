@@ -238,12 +238,17 @@ def test_strategy_and_backtest_lower_to_calls_not_inlined_control_flow() -> None
     assert "__strategy_declare" in call_names
     assert "__strategy_clause" in call_names
     assert "__backtest_run" in call_names
-    # Confirms 5.1's "no new instruction types for strategy/when/backtest"
-    # claim: nothing beyond Call/LoadConst/LoadVar (loading `a`/`b`/the
-    # backtest bounds) appears for these statements -- no dedicated
-    # strategy/when/backtest instruction was needed.
+    # No dedicated strategy/when/backtest instruction: the condition is an
+    # ordinary expression (here one BinOp) evaluated where the strategy is
+    # declared, and its register is what `__strategy_clause` receives.
     kinds = {type(i).__name__ for i in main.instructions}
-    assert kinds <= {"Call", "LoadConst", "LoadVar"}
+    assert kinds <= {"Call", "LoadConst", "LoadVar", "BinOp"}
+    (crossing,) = [i for i in main.instructions if isinstance(i, BinOp)]
+    assert crossing.op == "crosses_above"
+    (clause,) = [
+        i for i in main.instructions if isinstance(i, Call) and i.fn_name == "__strategy_clause"
+    ]
+    assert clause.args[1] == crossing.dest
 
 
 def test_when_body_lowers_to_a_separate_callable_program_not_inline() -> None:

@@ -1,0 +1,44 @@
+MACD crossovers, RSI dips below 40:
+3
+2
+========================================
+            BACKTEST RESULTS
+========================================
+Strategy                 TrendWithFilter
+Symbol                              AAPL
+Period          2024-01-02 to 2024-03-25
+Bars                                  60
+Fills                      next bar open
+Slippage                         5.0 bps
+Commission                       0.0 bps
+----------------------------------------
+Initial Equity                 10,000.00
+Final Equity                   10,298.60
+Total Return                       2.99%
+Buy & Hold                         1.25%
+CAGR                              13.39%
+Volatility                        11.61%
+Sharpe                              1.14
+Sortino                             1.79
+Max Drawdown                       3.79%
+Exposure                          28.33%
+----------------------------------------
+Trades                                 1
+Win Rate                         100.00%
+Profit Factor                        inf
+Avg Trade                          2.99%
+Costs Paid                         10.15
+Position at End                     flat
+========================================
+mean reversion: trades, Sharpe, max drawdown:
+1
+2.096803855385397
+0.0270464963981663
+True
+trend: in-sample Sharpe, out-of-sample Sharpe:
+2.54195563720897
+0.0
+best window, its Sharpe, and the p-value 0.05 becomes after the sweep:
+3
+1.0474056058564702
+0.2

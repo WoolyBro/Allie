@@ -49,6 +49,9 @@ class Closure:
     params: list[str]
     body: Any
     defining_env: Environment
+    # The body compiled by the tree-walking interpreter (a callable taking
+    # the call's Environment), so a call never re-inspects the AST.
+    code: Any = field(default=None, repr=False, compare=False)
 
 
 @dataclass
@@ -112,20 +115,19 @@ class BoolSeriesValue:
 
 @dataclass
 class StrategyValue:
-    """A declared `strategy` (Phase 7): its `when` clauses plus the
-    environment they were declared in. Like `Closure`, it captures that
-    environment by reference rather than snapshotting -- the clause
-    operands (`fast`, `slow`, ...) are only evaluated later, when a
-    `backtest` statement actually runs.
+    """A declared `strategy`: for each `when` clause, its signal -- the
+    condition, evaluated at the declaration -- and its action body, plus
+    the environment the actions run in.
 
-    `clauses` holds the AST `WhenClause` nodes; typing it loosely here
-    (`Any`) for the same circular-import reason `Closure.body` is
-    loose -- allie.ast imports nothing from this module, and it must
-    stay that way.
+    Evaluating the conditions at the declaration (not at `backtest`) is
+    what the IR and LLVM backends do; doing it here too means reassigning
+    an indicator after declaring a strategy can't change the strategy on
+    one backend only. Action bodies are typed loosely (`Any`) for the
+    same circular-import reason `Closure.body` is.
     """
 
     name: str
-    clauses: list[Any]
+    clauses: list[tuple[BoolSeriesValue, Any]]
     defining_env: Environment
 
 

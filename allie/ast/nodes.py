@@ -146,6 +146,57 @@ class FieldAccess(Expr):
 
 
 @dataclass(kw_only=True)
+class Index(Expr):
+    """`obj[index]` -- reads one element of a series. Read-only: series
+    are immutable values, so there is no element assignment. `span` is
+    the `[` token."""
+
+    span: SourceSpan
+    obj: Expr
+    index: Expr
+    inferred_type: Any = field(default=None, repr=False, compare=False)
+
+
+@dataclass(kw_only=True)
+class BacktestOption:
+    """`slippage: 0.001` in a backtest's `with` clause. The value is any
+    expression of the option's type (allie.quant.backtest_engine.OPTIONS)."""
+
+    span: SourceSpan
+    name: str
+    value: Expr
+
+
+@dataclass(kw_only=True)
+class Backtest(Expr):
+    """`backtest S on SYMBOL from N to M` used as a value: it runs the
+    backtest and evaluates to its result (`r.sharpe`, `r.returns`, ...)
+    instead of printing the results table, which the statement form
+    does."""
+
+    span: SourceSpan
+    strategy_name: str
+    symbol: str
+    start: Expr
+    end: Expr
+    options: list[BacktestOption] = field(default_factory=list)
+    inferred_type: Any = field(default=None, repr=False, compare=False)
+
+
+@dataclass(kw_only=True)
+class Widen(Expr):
+    """An implicit Int -> Float conversion. Never written in source: the
+    type checker wraps an Int expression in one wherever it lands in a
+    Float slot (an annotated `let`, an assignment, an argument, a
+    `return`), so every backend performs the conversion at the same
+    place instead of each guessing where widening happens."""
+
+    span: SourceSpan
+    operand: Expr
+    inferred_type: Any = field(default=None, repr=False, compare=False)
+
+
+@dataclass(kw_only=True)
 class ArrayLiteral(Expr):
     span: SourceSpan
     elements: list[Expr]
@@ -233,10 +284,13 @@ class ImportStmt(Stmt):
 
 @dataclass(kw_only=True)
 class WhenClause:
+    """`when <condition>: <action>`. The condition is any Series<Bool>
+    expression -- `fast crosses_above slow`, `rsi < 30.0`, or a
+    combination with `and`/`or` -- and the action runs at every bar
+    where it is true."""
+
     span: SourceSpan
-    left: Expr
-    operator: str  # "crosses_above" | "crosses_below"
-    right: Expr
+    condition: Expr
     body: Stmt
 
 
@@ -249,11 +303,16 @@ class StrategyDecl(Stmt):
 
 @dataclass(kw_only=True)
 class BacktestStmt(Stmt):
+    """`backtest S on SYMBOL from N to M;`. The bounds are Int
+    expressions -- `from 0 to split`, `from split to len(c)` -- so a
+    train/test split is two backtests over one variable."""
+
     span: SourceSpan
     strategy_name: str
     symbol: str
-    start: int | float
-    end: int | float
+    start: Expr
+    end: Expr
+    options: list[BacktestOption] = field(default_factory=list)
 
 
 @dataclass(kw_only=True)

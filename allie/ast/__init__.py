@@ -3,6 +3,8 @@
 from allie.ast.nodes import (
     ArrayLiteral,
     Assignment,
+    Backtest,
+    BacktestOption,
     BacktestStmt,
     Binary,
     Block,
@@ -18,6 +20,7 @@ from allie.ast.nodes import (
     Identifier,
     IfStmt,
     ImportStmt,
+    Index,
     LetStmt,
     Logical,
     NumberLiteral,
@@ -31,11 +34,14 @@ from allie.ast.nodes import (
     Unary,
     WhenClause,
     WhileStmt,
+    Widen,
 )
 
 __all__ = [
     "ArrayLiteral",
     "Assignment",
+    "Backtest",
+    "BacktestOption",
     "BacktestStmt",
     "Binary",
     "Block",
@@ -51,6 +57,7 @@ __all__ = [
     "Identifier",
     "IfStmt",
     "ImportStmt",
+    "Index",
     "LetStmt",
     "Logical",
     "NumberLiteral",
@@ -64,4 +71,5 @@ __all__ = [
     "Unary",
     "WhenClause",
     "WhileStmt",
+    "Widen",
 ]

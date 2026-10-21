@@ -1,36 +1,30 @@
-"""Trading-action builtins -- Phase 7.2. `buy()`/`sell()` are ordinary
-zero-argument registered builtins, NOT lexer keywords: the merged
-grammar treats them as `Call` expressions resolved through
-`allie.stdlib.registry`, exactly like `print`/`load`. (The QuantLang-only
-draft listed them as keywords; confirmed against
-`allie/lexer/keywords.py` that this repo does not, and kept it that way
--- it means they need no parser, lowering, or codegen support of their
-own, and they reach the LLVM backend through the same bridge as every
-other builtin.)
+"""Order builtins: `buy()`, `sell()`, `short()`, `cover()` and
+`target(fraction)`. Ordinary registered builtins, not keywords -- calls
+resolved through `allie.stdlib.registry` exactly like `print`/`load`, so
+they need no parser, lowering or codegen support of their own and reach
+the LLVM backend through the same bridge as every other builtin. What
+each one does to the position is in allie/quant/backtest_engine.py
+("Positions").
 
-**Valid only inside a strategy body**, enforced at two levels for two
-different reasons:
+**Valid only while a strategy runs**, enforced at two levels:
 
-- Statically, `allie.semantic.resolver` already rejects a `when` clause
-  outside a strategy, so a `buy()` in a `when` body is structurally
-  confined.
-- Dynamically, these check for an active engine
-  (`allie.quant.backtest_engine.current_engine`) and raise otherwise.
-  This is the check that catches a bare top-level `buy();` -- the
-  resolver deliberately does not existence-check call targets (no
-  builtin registry existed when it was written), so nothing earlier in
-  the pipeline knows a given `Call` is specifically `buy`.
+- Statically, the type checker rejects an order outside a `when` action
+  or a function body (a function may be called from an action).
+- Dynamically, each checks for an active engine
+  (`allie.quant.backtest_engine.current_engine`) and raises otherwise --
+  which catches a function that places an order being called from
+  outside a backtest.
 """
 
 from __future__ import annotations
 
-from allie.quant.backtest_engine import current_engine
+from allie.quant.backtest_engine import BacktestEngine, current_engine
 from allie.runtime.errors import AllieValueError
 from allie.stdlib.registry import register
-from allie.typechecker.types import VOID, FunctionType
+from allie.typechecker.types import FLOAT, VOID, FunctionType
 
 
-def _require_engine(name: str) -> object:
+def _require_engine(name: str) -> BacktestEngine:
     engine = current_engine()
     if engine is None:
         raise AllieValueError(
@@ -40,14 +34,27 @@ def _require_engine(name: str) -> object:
 
 
 def buy() -> None:
-    engine = _require_engine("buy")
-    engine.buy()  # type: ignore[attr-defined]
+    _require_engine("buy").buy()
 
 
 def sell() -> None:
-    engine = _require_engine("sell")
-    engine.sell()  # type: ignore[attr-defined]
+    _require_engine("sell").sell()
+
+
+def short() -> None:
+    _require_engine("short").short()
+
+
+def cover() -> None:
+    _require_engine("cover").cover()
+
+
+def target(fraction: float) -> None:
+    _require_engine("target").target(fraction)
 
 
 register("buy", FunctionType(params=(), ret=VOID), buy)
 register("sell", FunctionType(params=(), ret=VOID), sell)
+register("short", FunctionType(params=(), ret=VOID), short)
+register("cover", FunctionType(params=(), ret=VOID), cover)
+register("target", FunctionType(params=(FLOAT,), ret=VOID), target)

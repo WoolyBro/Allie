@@ -1,37 +1,9 @@
-# Allie Grammar (Phase 2, merged)
+# Allie Grammar
 
-Written before `parser.py` exists, per Phase 2.2. Supersedes
-`docs/grammar.ebnf` (the Phase 0 placeholder, which only covered
-`let/func/if/else/while/return` and scalar expressions).
-
-## Reconciliations against what's already committed
-
-The pasted grammar conflicted with two things already locked in
-elsewhere in this repo. Flagging both rather than silently picking a
-side:
-
-1. **Type annotations are optional, not mandatory.** The pasted
-   `letStmt`/`funcDecl`/`params` productions had no `?` on the type
-   clause, which would make every `let`, parameter, and return type
-   mandatory. That contradicts the already-locked "gradual typing"
-   decision in `docs/spec.md` ("dynamic by default; annotations enable a
-   lightweight checker") and would invalidate `examples/hello_world.qs`,
-   which already mixes annotated (`let prices: Series[float] = ...`) and
-   unannotated (`let fast_ma = sma(...)`) `let`s. Treated the missing `?`
-   as a paste omission, not a new decision — say so if mandatory typing
-   was actually intended.
-2. **Generics use `Series[float]`** (brackets), not `Series<float>`
-   (angle brackets). `docs/grammar.ebnf`, `docs/spec.md`, and
-   `examples/hello_world.qs` all already use bracket generics, and
-   brackets avoid the classic `<`/`>`-vs-comparison-operator parsing
-   ambiguity that angle-bracket generics reintroduce. Kept brackets.
-
-Also fixed: `factor`'s multiplication alternative was dropped in the
-paste (rendered as an empty string between the pipes) — restored as
-`"*"`, matching the shape of `term`'s production right above it. An
-`arguments` production was referenced by `call` but never defined in the
-paste — added the obvious `expression ("," expression)*` shape, matching
-`arrayLiteral`'s inner list.
+The complete syntax, as `allie/parser/parser.py` implements it — one
+parser method per production below, in the same order, so the two can be
+read side by side. The rules for individual tokens are in
+[Lexical structure](#lexical-structure) at the end.
 
 ## Grammar
 
@@ -44,7 +16,7 @@ statement      → letStmt | funcDecl | ifStmt | whileStmt | forStmt
 
 letStmt        → "let" IDENTIFIER (":" type)? "=" expression ";"
 funcDecl       → "func" IDENTIFIER "(" params? ")" ("->" type)? block
-params         → param ("," param)*
+params         → param ("," param)* ","?
 param          → IDENTIFIER (":" type)?
 
 ifStmt         → "if" expression block ("else" (ifStmt | block))?
@@ -56,8 +28,11 @@ returnStmt     → "return" expression? ";"
 importStmt     → "import" STRING ";"
 
 strategyDecl   → "strategy" IDENTIFIER "{" whenClause* "}"
-whenClause     → "when" expression ("crosses_above" | "crosses_below") expression ":" statement
-backtestStmt   → "backtest" IDENTIFIER "on" IDENTIFIER "from" NUMBER "to" NUMBER ";"
+whenClause     → "when" expression ":" statement
+backtestStmt   → backtest ";"
+backtest       → "backtest" IDENTIFIER "on" IDENTIFIER "from" term "to" term
+                 ("with" option ("," option)*)?
+option         → IDENTIFIER ":" term
 
 exprStmt       → expression ";"
 block          → "{" statement* "}"
@@ -66,55 +41,132 @@ expression     → assignment
 assignment     → IDENTIFIER "=" assignment | logic_or
 logic_or       → logic_and ("or" logic_and)*
 logic_and      → equality ("and" equality)*
-equality       → comparison (("==" | "!=") comparison)*
-comparison     → term (("<" | ">" | "<=" | ">=") term)*
+equality       → comparison (("==" | "!=") comparison)?
+comparison     → term (("<" | ">" | "<=" | ">=" | "crosses_above" | "crosses_below") term)?
 term           → factor (("+" | "-") factor)*
 factor         → unary (("*" | "/" | "%") unary)*
 unary          → ("-" | "!") unary | call
-call           → primary ("(" arguments? ")" | "." IDENTIFIER)*
-arguments      → expression ("," expression)*
+call           → primary ( "(" arguments? ")" | "." IDENTIFIER | "[" expression "]" )*
+arguments      → expression ("," expression)* ","?
 
 primary        → NUMBER | STRING | "true" | "false" | IDENTIFIER
-               | "(" expression ")" | arrayLiteral
-arrayLiteral   → "[" (expression ("," expression)*)? "]"
+               | "(" expression ")" | arrayLiteral | backtest
+arrayLiteral   → "[" (expression ("," expression)* ","?)? "]"
 
 type           → genericType | baseType
 genericType    → genericName "[" type "]"
 genericName    → "Series" | "Matrix" | "Vector"
 baseType       → "Int" | "Float" | "Bool" | "String" | "Void"
-               | "Date" | "DateRange" | "PriceSeries"
+               | "Date" | "DateRange" | "PriceSeries" | "BacktestResult"
 ```
 
-**Corrected in Phase 9** after checking the production against what the
-type checker actually resolves. Two drifts had crept in:
+Notes on the productions:
 
-- `PriceSeries` (added in Phase 4 as `load`'s return type) resolves
-  fine — `let p: PriceSeries = load(...)` works — but was missing from
-  `baseType`.
-- `Series`/`Matrix`/`Vector` were listed under `baseType` with the type
-  argument optional, which implies bare `let s: Series = ...` is legal.
-  It isn't: those three are generic *constructors* and the argument is
-  required (`resolve_base_type("Series")` returns nothing, so it fails
-  with "unknown type"). Split into `genericType` to say so.
+- **Comparisons and equality don't chain** — note the `?` rather than
+  `*`. `0 < x < 10` is an error whose hint says to write
+  `0 < x and x < 10`, instead of silently meaning `(0 < x) < 10` and
+  failing later with a confusing "compare Bool with Int" type error. To
+  compare the result of a comparison, parenthesize: `(a < b) == c`.
+- **Indexing** `s[i]` reads one element of a series, counting from 0.
+  Series are immutable values, so `s[i] = x` is an error, and so is
+  assigning to a field (`p.close = x`): the only assignment target is a
+  variable name.
+- **Trailing commas** are allowed in parameter lists, argument lists and
+  array literals, so multi-line lists can end every line with one.
+- **A `when` condition is any expression** — the type checker requires
+  a `Series<Bool>`, one decision per bar: `fast crosses_above slow`,
+  `rsi < 30.0`, `fast crosses_above slow and rsi < 70.0`.
+- **`crosses_above` / `crosses_below`** are comparison operators: same
+  precedence as `<`, and they don't chain either. They work anywhere,
+  not only in a `when`: `let up = fast crosses_above slow;`.
+- **`backtest`** is a statement, which prints the results table, or an
+  expression, which evaluates to a `BacktestResult`
+  (`let r = backtest S on AAPL from 0 to 100;`). The statement form is
+  what a `backtest` at the start of a statement means.
+- **`backtest` bounds** are bar indices, `from` inclusive and `to`
+  exclusive, written at `+`/`-` precedence: `from 0 to 100`,
+  `from split to len(AAPL.close)`. A literal bound that is fractional or
+  negative, or two literals with `to <= from`, is a compile error; a
+  computed bound must be an `Int` (a type error otherwise), and is
+  checked against the data when the backtest runs. A `to` past the last
+  bar is fine — it's clamped to the data.
+- **`with` options** (`with slippage: 0.001, fill: "close"`) are parsed
+  for any name; which names exist and their types is the type checker's
+  rule, from the one table the engine also reads
+  (`allie.quant.backtest_engine.OPTIONS`).
+- **`=` used as an `if`/`while`/`for` condition** is reported; it is
+  almost always a typo for `==`.
+- **Type annotations** are optional on `let` (the type checker infers
+  them) and required on function parameters and return types — a
+  type-checker rule, not a grammatical one.
+- **Generics use brackets** (`Series[Float]`), which avoids the
+  `<`/`>`-versus-comparison ambiguity angle brackets would bring.
+  `Series`, `Matrix` and `Vector` always take a type argument; a bare
+  `Series` is an unknown type.
 
-## Notes carried over from Phase 2.1 (lexer)
+## Syntax errors
 
-- `and`/`or` are keywords (`TokenType.AND`/`OR`), not symbolic `&&`/`||`
-  — simpler, and matches `logic_and`/`logic_or` above using the word
-  forms. They were missing from the pasted `KEYWORD_ALIASES` example
-  even though `TokenType` defines them; added as canonical-only entries
-  (see `docs/keywords.md`).
-- Slang keyword aliases (`ts` for `let`, `Ahhh` for `while`, etc. —
-  `allie/lexer/keywords.py`) are transparent to this grammar: the lexer
-  resolves every spelling to the same `TokenType` before the parser ever
-  sees it, so every production above is spelling-agnostic by
-  construction.
-- Number literals require a digit on both sides of the decimal point
-  (`1.` and `.5` each lex as two tokens, never a malformed float) — see
-  `allie/lexer/lexer.py`.
+The parser reports every syntax error in a file in a single run, each
+with the offending line, a caret, and often a `help:` line:
 
-## Not yet covered
+- Messages say what was found: `found keyword 'let'`, `found ')'`,
+  `found end of file`.
+- A missing `;` or `)` at the end of a line is reported just after the
+  last token on that line, where the fix goes — not at the start of the
+  next line.
+- An unclosed `{`, `(` or `[` is reported at the opening delimiter. For
+  a `{`, the hint names an inner block whose `}` is indented less than
+  the line that opened it, which is usually where a brace is actually
+  missing.
+- A keyword used as a name says so, including slang spellings:
+  `let ts = 1;` → "'ts' is reserved as another spelling of 'let'".
+- Recovery is local: after an error the parser resumes at the next
+  statement, never skips past the `}` that closes the current block, and
+  a broken `when` clause only costs that clause.
+- Nesting deeper than 64 levels (parentheses, brackets, calls, blocks)
+  or a statement nested more than 200 levels deep is an error, not a
+  crash.
 
-`assignment → IDENTIFIER "=" assignment` only supports assigning to a
-bare identifier — no `arr[i] = x` or `obj.field = x` targets yet. Revisit
-once the parser needs them; not blocking Phase 2.1/2.2.
+## Lexical structure
+
+The terminals used above (`IDENTIFIER`, `NUMBER`, `INTEGER`, `STRING`)
+and everything the lexer discards. Implemented in `allie/lexer/lexer.py`.
+
+```ebnf
+IDENTIFIER     → [A-Za-z_] [A-Za-z0-9_]*        (* minus keywords *)
+NUMBER         → digits ("." digits)? exponent?
+INTEGER        → digits                          (* a NUMBER with no "." or exponent *)
+digits         → [0-9] ("_"? [0-9])*
+exponent       → ("e" | "E") ("+" | "-")? digits
+STRING         → '"' (char | escape)* '"'      (* on one line *)
+escape         → "\n" | "\t" | "\r" | '\"' | "\\"
+comment        → "//" (any but newline)* | "/*" (any | comment)* "*/"
+```
+
+- **Whitespace** is space, tab, CR and LF; CRLF files behave exactly
+  like LF ones. A byte-order mark at the start of a file is ignored.
+- **Comments** are `//` to end of line, or `/* ... */`. Block comments
+  nest, so a region containing one can itself be commented out.
+- **Identifiers and keywords** are ASCII and case-sensitive: `Ahhh` is
+  `while`, `ahhh` is an identifier. Slang keyword aliases (`ts` for
+  `let`, ... — `allie/lexer/keywords.py`) resolve to the same token as
+  the canonical spelling, so every production above is
+  spelling-agnostic by construction.
+- **Numbers**: `42`, `3.14`, `1e-4`, `2.5E6`, `10_000`. A fractional part
+  or an exponent makes the literal a `Float`; otherwise it's an `Int`,
+  which must fit in a signed 64-bit integer. `_` separates digits and
+  may only sit between two of them. A digit is needed on both sides of
+  `.`: `1.` is `NUMBER` then `.`, and `.5` is an error suggesting `0.5`.
+  Only decimal is supported (`0x1F` is an error).
+- **Strings** use double quotes and end on the line they start on. Use
+  `\n` for a line break inside one.
+- `and`/`or` are keywords, not `&&`/`||`.
+- **Outside strings and comments, source must be ASCII.** This catches
+  look-alike letters (Cyrillic `а` for Latin `a`) and invisible
+  characters (no-break space, zero-width space) pasted from documents or
+  chat. The error names the character by code point.
+
+Lexical errors never stop the lexer: every one in the file is reported
+in a single run, each with the offending line, a caret, and usually a
+`help:` line (`&&` → use `and`, `'...'` → use double quotes, `#` → use
+`//`, curly quotes → use `"`).

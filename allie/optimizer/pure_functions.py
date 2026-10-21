@@ -41,12 +41,47 @@ PURE_FUNCTIONS: frozenset[str] = frozenset(
         "dot",
         "zscore",
         "percentile",
-        # Added in Phase 9, not Phase 7 when these builtins landed: the
-        # Phase 9 audit found them unclassified, which meant CSE had
-        # been silently declining to optimize them. They are pure --
-        # deterministic functions of two series, no I/O, no state.
-        "crosses_above",
-        "crosses_below",
+        "RSI",
+        "ATR",
+        "rolling_max",
+        "rolling_min",
+        "count",
+        "sum",
+        "min",
+        "max",
+        "rolling_sum",
+        "rolling_zscore",
+        "rolling_corr",
+        "cumsum",
+        # Numbers and series alike; raising on a bad number, identically
+        # on every call.
+        "abs",
+        "sqrt",
+        "log",
+        "exp",
+        "floor",
+        "ceil",
+        "round",
+        # Returns and risk.
+        "log_returns",
+        "cumulative_returns",
+        "drawdown",
+        "max_drawdown",
+        "volatility",
+        "sortino",
+        "value_at_risk",
+        "expected_shortfall",
+        "beta",
+        # Matrices.
+        "matrix",
+        "with_column",
+        "identity",
+        "rows",
+        "cols",
+        "row",
+        "column",
+        "covariance_matrix",
+        "ols",
         # Significance testing. permutation_pvalue is pure despite
         # sampling: it takes an explicit seed, so the same arguments
         # always give the same p-value (docs/spec.md "Determinism").
@@ -54,6 +89,14 @@ PURE_FUNCTIONS: frozenset[str] = frozenset(
         "benjamini_hochberg",
         "sharpe",
         "permutation_pvalue",
+        "len",
+        # The `__index_*` functions behind `s[i]` raise on a bad index,
+        # but identically on every call, so deduplicating two identical
+        # calls can't change behavior. (DCE never removes a Call at all,
+        # so an unused out-of-range `s[99];` still raises.)
+        "__index_float",
+        "__index_int",
+        "__index_bool",
     }
 )
 
@@ -65,6 +108,14 @@ PURE_FUNCTIONS: frozenset[str] = frozenset(
 # adding a builtin without deciding whether it is pure fails the build
 # rather than silently defaulting to "not optimized".
 #
-# That test was added in Phase 9 after the audit found `crosses_above`/
-# `crosses_below` (Phase 7) in neither set.
-KNOWN_IMPURE_FUNCTIONS: frozenset[str] = frozenset({"load", "print", "normal", "buy", "sell"})
+# That test was added in Phase 9 after the audit found the then-builtin
+# `crosses_above`/`crosses_below` (Phase 7) in neither set.
+KNOWN_IMPURE_FUNCTIONS: frozenset[str] = frozenset(
+    {"load", "print", "normal", "buy", "sell", "short", "cover", "target"}
+)
+
+# Calls that can't read or assign any variable: every builtin, plus the
+# array-literal constructor. Anything else -- a user function, a `when`
+# body that `__backtest_run` invokes -- may touch module-level
+# variables, so dataflow passes must assume it reads and writes them all.
+VARIABLE_SAFE_CALLS: frozenset[str] = PURE_FUNCTIONS | KNOWN_IMPURE_FUNCTIONS | {"__make_series"}

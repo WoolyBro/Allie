@@ -5,7 +5,7 @@ parser and everything downstream stays unaware of which spelling was
 used.
 
 Quant keywords (strategy/when/crosses_above/crosses_below/backtest/on/
-from/to) are canonical-only in v1 -- the mechanism supports slang
+from/to/with) are canonical-only in v1 -- the mechanism supports slang
 aliases for them uniformly later without touching the lexer.
 
 `and`/`or` are added here beyond the originally pasted table: TokenType
@@ -57,6 +57,7 @@ KEYWORD_ALIASES: dict[str, TokenType] = {
     "on": TokenType.ON,
     "from": TokenType.FROM,
     "to": TokenType.TO,
+    "with": TokenType.WITH,
 }
 
 
@@ -90,9 +91,9 @@ def render_keywords_markdown() -> str:
         "Lookup is case-sensitive: `Ahhh` (while) and `ahhh` are different tokens.",
         "",
         "Quant keywords (`strategy`, `when`, `crosses_above`, `crosses_below`, "
-        "`backtest`, `on`, `from`, `to`) are canonical-only in v1 -- the mechanism "
-        "supports slang aliases for them uniformly later without touching the "
-        "lexer.",
+        "`backtest`, `on`, `from`, `to`, `with`) are canonical-only in v1 -- the "
+        "mechanism supports slang aliases for them uniformly later without touching "
+        "the lexer.",
         "",
     ]
     return "\n".join(lines) + "\n" + render_keywords_table()

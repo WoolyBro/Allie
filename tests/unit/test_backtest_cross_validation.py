@@ -41,6 +41,7 @@ from allie.typechecker.errors import QSTypeError
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _EXAMPLE = _REPO_ROOT / "examples" / "moving_average.qs"
 _FIXTURE = _REPO_ROOT / "tests" / "fixtures" / "AAPL_sample.csv"
+_FIXTURE_4_BARS = _REPO_ROOT / "tests" / "fixtures" / "AAPL_4bars.csv"
 
 
 def _example_source() -> str:
@@ -153,6 +154,8 @@ _DSL_PROGRAMS: dict[str, str] = {
         }}
         backtest Narrow on AAPL from 10 to 40;
     """,
+    # A condition has one value per price bar, so four hand-written bars
+    # need a four-bar price file.
     "array_literal_signals": """
         let up: Series[Float] = [1.0, 4.0, 1.0, 4.0];
         let flat: Series[Float] = [3.0, 3.0, 3.0, 3.0];
@@ -162,7 +165,7 @@ _DSL_PROGRAMS: dict[str, str] = {
             when up crosses_below flat: sell();
         }
         backtest Toy on px from 0 to 4;
-    """.replace("REPLACED", _FIXTURE.as_posix()),
+    """.replace("REPLACED", _FIXTURE_4_BARS.as_posix()),
 }
 
 
@@ -181,14 +184,23 @@ def test_all_three_backends_agree_on_backtest_metrics(name: str) -> None:
 # ---- Phase 2.5 semantic rules, re-checked against the wired pipeline ----
 
 
-def test_buy_outside_a_strategy_body_raises_at_runtime() -> None:
-    with pytest.raises(AllieValueError, match="only valid inside a strategy"):
-        _run_tree("buy();")
+@pytest.mark.parametrize("order", ["buy()", "sell()", "short()", "cover()", "target(0.5)"])
+def test_an_order_outside_a_strategy_is_a_compile_error(order: str) -> None:
+    name = order.split("(")[0]
+    message = f"'{name}()' places an order, which only a strategy's 'when' action can do"
+    with pytest.raises(QSTypeError, match=re.escape(message)):
+        _run_tree(f"if true {{ {order}; }}")
 
 
-def test_sell_outside_a_strategy_body_raises_at_runtime() -> None:
+def test_an_order_from_a_function_called_outside_a_backtest_raises_at_runtime() -> None:
+    # A function may place orders -- an action can call it -- so this one
+    # is only knowable when it runs.
     with pytest.raises(AllieValueError, match="only valid inside a strategy"):
-        _run_tree("sell();")
+        _run_tree("func enter() -> Void { buy(); }\nenter();")
+
+
+def test_a_user_function_named_like_an_order_is_just_a_function() -> None:
+    assert _run_tree('func target(x: Float) -> Void { print(x); }\ntarget(2.5);') == "2.5\n"
 
 
 def _resolver_errors(source: str) -> list[str]:
@@ -287,9 +299,9 @@ def test_backtest_symbol_must_be_a_price_series() -> None:
         )
 
 
-def test_when_operands_must_be_series_float() -> None:
-    with pytest.raises(QSTypeError, match="Series<Float>"):
+def test_a_when_condition_must_be_a_series_of_bools() -> None:
+    with pytest.raises(QSTypeError, match="must be a Series<Bool>"):
         _run_tree(
             "let slow: Series[Float] = [3.0, 3.0];\n"
-            "strategy S { when 1.0 crosses_above slow: buy(); }"
+            "strategy S { when slow: buy(); }"
         )

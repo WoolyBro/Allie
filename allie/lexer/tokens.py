@@ -34,6 +34,7 @@ class TokenType(Enum):
     ON = auto()
     FROM = auto()
     TO = auto()
+    WITH = auto()
 
     IDENTIFIER = auto()
     NUMBER = auto()
@@ -71,8 +72,19 @@ class TokenType(Enum):
 
 @dataclass(frozen=True, slots=True)
 class Token:
+    """One lexeme and where it came from.
+
+    `lexeme` is always the exact source slice -- quotes, underscores and
+    escapes included -- so `source[offset : offset + len(lexeme)] ==
+    lexeme` holds for every token (tests/unit/test_lexer.py checks this
+    against every example program). `literal` carries the decoded
+    value. `line`/`column` are 1-based and count code points; `offset`
+    is the 0-based index into the source string.
+    """
+
     type: TokenType
     lexeme: str
     literal: Any
     line: int
     column: int
+    offset: int = 0

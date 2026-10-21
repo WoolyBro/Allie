@@ -371,21 +371,56 @@ def test_dce_defines_no_local_notion_of_purity() -> None:
     assert "PURE" not in body, "dce.py appears to define or use a local purity set"
 
 
-def test_cse_optimizes_a_pure_crossing_call() -> None:
-    """Regression for the classification fix: two identical
-    `crosses_above` calls with no intervening reassignment must now
-    collapse. Before Phase 9 they did not."""
+def test_cse_optimizes_a_pure_indicator_call() -> None:
+    """Two identical `RSI(close, 14)` calls with no intervening
+    reassignment collapse -- what the purity classification is for."""
     before = IRProgram(
         instructions=[
-            LoadVar(dest="r0", name="fast"),
-            LoadVar(dest="r1", name="slow"),
-            Call(dest="r2", fn_name="crosses_above", args=["r0", "r1"]),
-            LoadVar(dest="r3", name="fast"),
-            LoadVar(dest="r4", name="slow"),
-            Call(dest="r5", fn_name="crosses_above", args=["r3", "r4"]),
+            LoadVar(dest="r0", name="close"),
+            LoadConst(dest="r1", value=14),
+            Call(dest="r2", fn_name="RSI", args=["r0", "r1"]),
+            LoadVar(dest="r3", name="close"),
+            LoadConst(dest="r4", value=14),
+            Call(dest="r5", fn_name="RSI", args=["r3", "r4"]),
             Return(value="r5"),
         ]
     )
     after = cse.run(before)
     calls = [i for i in after.instructions if isinstance(i, Call)]
     assert len(calls) == 1
+
+
+def test_cse_collapses_a_repeated_crossing() -> None:
+    # `when fast crosses_above slow and ...` written in two clauses.
+    before = IRProgram(
+        instructions=[
+            LoadVar(dest="r0", name="fast"),
+            LoadVar(dest="r1", name="slow"),
+            BinOp(dest="r2", op="crosses_above", left="r0", right="r1"),
+            LoadVar(dest="r3", name="fast"),
+            LoadVar(dest="r4", name="slow"),
+            BinOp(dest="r5", op="crosses_above", left="r3", right="r4"),
+            BinOp(dest="r6", op="and", left="r2", right="r5"),
+            Return(value="r6"),
+        ]
+    )
+    after = cse.run(before)
+    crossings = [i for i in after.instructions if isinstance(i, BinOp) and i.op == "crosses_above"]
+    assert len(crossings) == 1
+
+
+def test_dce_keeps_an_unused_series_comparison() -> None:
+    """On two series of different lengths `<` raises, and the untyped IR
+    can't rule that out -- so deleting an unused one could turn an
+    error into silent success on the optimized backends only."""
+    before = IRProgram(
+        instructions=[
+            LoadVar(dest="r0", name="a"),
+            LoadVar(dest="r1", name="b"),
+            BinOp(dest="r2", op="<", left="r0", right="r1"),
+            LoadConst(dest="r3", value=0),
+            Return(value="r3"),
+        ]
+    )
+    after = dce.run(before)
+    assert any(isinstance(i, BinOp) and i.op == "<" for i in after.instructions)

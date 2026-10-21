@@ -10,8 +10,11 @@ here, just driven by source text instead of hand-built trees.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
+import allie.stdlib as stdlib
 from allie.lexer.lexer import Lexer
 from allie.parser.parser import Parser
 from allie.runtime.environment import Environment
@@ -232,3 +235,48 @@ def test_closures_capture_environment_by_reference_not_by_value() -> None:
     )
     assert env.get("before") == 10
     assert env.get("after") == 99
+
+
+# ---- an AST the type checker never saw ----
+#
+# The interpreter compiles each operator to a closure specialized by the
+# types the checker inferred. A node without them -- an AST built or
+# parsed without checking -- falls back to the generic, dynamically typed
+# operator, which must agree with the specialized one.
+
+_UNTYPED_CASES = [
+    ("print(1 + 2.5);", "3.5"),
+    ("print(7 / 2);", "3.5"),
+    ("print(-7 % 2);", "1"),
+    ("print(-2.5);", "-2.5"),
+    ("print(!true);", "False"),
+    ('print("a" + "b");', "ab"),
+    ("print(2 * 3 - 1);", "5"),
+    ("print(1 < 2.5);", "True"),
+    ("print([1.0, 2.0] * 2.0);", "Series[2, 4]"),
+    ("print(-[1.0, 2.0]);", "Series[-1, -2]"),
+]
+
+
+@pytest.mark.parametrize(("source", "expected"), _UNTYPED_CASES)
+def test_an_unchecked_ast_runs_through_the_generic_operators(
+    source: str, expected: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    program = Parser(Lexer(source).scan_tokens()).parse()
+    run_program(program, stdlib.create_global_environment())
+    assert capsys.readouterr().out.strip() == expected
+
+
+@pytest.mark.parametrize(
+    ("source", "message"),
+    [
+        ("print(1 / 0);", "division by zero. Line 1, Column 9"),
+        ("print(1 % 0);", "modulo by zero. Line 1, Column 9"),
+        ("print(9223372036854775807 + 1);", "integer overflow"),
+        ("print(-(-9223372036854775807 - 1));", "integer overflow"),
+    ],
+)
+def test_the_generic_operators_raise_with_a_location(source: str, message: str) -> None:
+    program = Parser(Lexer(source).scan_tokens()).parse()
+    with pytest.raises(AllieValueError, match=re.escape(message)):
+        run_program(program, stdlib.create_global_environment())

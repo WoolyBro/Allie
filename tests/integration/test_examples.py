@@ -83,9 +83,6 @@ def test_negative_example_fails_for_its_stated_reason(
 
     assert exit_code != 0, f"{stem}.qs was expected to fail but exited 0"
     captured = capsys.readouterr()
-    # Diagnostics from DiagnosticBag.print_all() (parser/resolver/
-    # lookahead) go to stdout, matching every other collect-and-report
-    # pass in the pipeline; a QSTypeError or AllieRuntimeError instead
-    # prints to stderr -- check both so this doesn't depend on which
-    # stage happens to reject the program.
-    assert expected_reason in (captured.out + captured.err)
+    # Every compile and runtime error goes to stderr, and nothing ran.
+    assert expected_reason in captured.err
+    assert captured.out == ""

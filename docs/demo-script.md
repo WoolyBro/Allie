@@ -57,9 +57,8 @@ Scroll to the LLVM section.
 
 ## 0:45–1:00 — The part nobody else has, then close
 
-Have `/tmp/cheat.qs` ready (a strategy using `shift(close, -1)`).
-
-Run: `allie run cheat.qs`
+Run: `allie check --audit examples/cheat_demo.qs` (a strategy using
+`shift(close, -1)`).
 
 > "This strategy peeks one bar into the future — `shift(close, -1)` is
 > tomorrow's price, available today. Before I added a check for it, this
@@ -68,7 +67,12 @@ Run: `allie run cheat.qs`
 > it's a compile error: there's a taint analysis that tracks
 > future-derived data through variables and indicators and refuses to
 > let it reach a trading decision. That's the most common silent bug in
-> backtesting, and it's a type error here."
+> backtesting, and it's a type error here. And it's not just a claim:
+> `--audit` re-runs the program with the data cut off after every bar,
+> and shows the exact bar where a decision changes. At bar 37 it buys
+> with all 60 bars and doesn't with only the first 38. The test suite
+> runs that experiment on hundreds of generated programs, and every one
+> the compiler accepts passes it."
 
 Optional, if time: `allie run examples/rigor.qs`
 
@@ -88,18 +92,21 @@ Optional, if time: `allie run examples/rigor.qs`
 >
 > Everything runs on three independent backends — tree-walking
 > interpreter, IR interpreter, and the JIT — and they're cross-validated
-> against each other on every test. 531 tests, 96% coverage."
+> against each other on every test. 1234 tests, 97% coverage."
 
 ---
 
 ## If they ask questions
 
 **"Is it faster than Python?"**
-> "For control flow, dramatically — about 127× faster than my
-> interpreter and 11× faster than equivalent Python on a loop benchmark.
-> For the quant stuff, no, it's slower, because both end up inside the
-> same numpy calls and I add overhead on top. I measured it rather than
-> guessing, and it's in the README."
+> "Per loop iteration, yes — compiled code runs an iteration in about
+> half a nanosecond against CPython's thirty. But LLVM takes a few
+> milliseconds to compile, so for short programs Python still wins on
+> total time, and for the quant workloads both sides end up in the same
+> numpy calls. Every number in the benchmark report has a confidence
+> interval, and the first version of my harness was wrong — it timed
+> Python with memory tracing on, which made the JIT look 11× faster than
+> it is. I found that and fixed it."
 
 **"Why the weird keywords?"** *(`ts`, `Ahhh`, `grindset`)*
 > "Mostly for fun. But the implementation is the interesting part: it's

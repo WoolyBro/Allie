@@ -88,6 +88,15 @@ class PriceSeriesType(_SingletonType):
     _name = "PriceSeries"
 
 
+class BacktestResultType(_SingletonType):
+    """What a `backtest` expression evaluates to: its metrics (`sharpe`,
+    `cagr`, `max_drawdown`, ...), trade count, and per-bar equity and
+    returns -- so results can be compared, corrected for multiple
+    testing, and fed to the significance functions in source."""
+
+    _name = "BacktestResult"
+
+
 class StrategyType(_SingletonType):
     """The type of a declared `strategy` (Phase 7.2), so a `backtest`
     statement can verify its target through the ordinary
@@ -101,13 +110,39 @@ class StrategyType(_SingletonType):
 
 class AnyType(_SingletonType):
     """Top type: is_assignable(source, ANY) is always True (see
-    is_assignable below). Exists only so `print`'s parameter can accept
-    anything -- deliberately NOT registered in _BASE_TYPES_BY_NAME, so a
-    user can't write `let x: Any` themselves. Exposing that would
-    undermine gradual typing's whole point; this is a narrow, justified
-    exception for one builtin, not a general escape hatch."""
+    is_assignable below). Exists only for builtin signatures: `print`
+    accepts anything, and `len`'s `Series<Any>` accepts a series of any
+    element type. Deliberately NOT registered in _BASE_TYPES_BY_NAME, so
+    a user can't write `let x: Any` themselves. Exposing that would
+    undermine the point of static typing; this is a narrow, justified
+    exception for builtins, not a general escape hatch."""
 
     _name = "Any"
+
+
+class ElementwiseType(_SingletonType):
+    """A builtin parameter that takes a number or a numeric series, for
+    the math functions that apply to either (`log`, `sqrt`, `exp`). An
+    Int argument is widened to Float; the result, the type checker's
+    rule, is a Float for a number and a Series<Float> for a series. Like
+    ANY, never written in source."""
+
+    _name = "Float|Series<Float>"
+
+
+class ElementwiseIntType(_SingletonType):
+    """ElementwiseType for a function that keeps an Int an Int (`abs`)."""
+
+    _name = "Int|Float|Series<Float>"
+
+
+class ErrorType(_SingletonType):
+    """The type of an expression that failed to type-check. Assignable
+    to and from everything, so every check involving it passes silently:
+    one mistake produces one error instead of a cascade of consequences.
+    Never appears in a program that type-checks."""
+
+    _name = "<error>"
 
 
 INT = IntType()
@@ -118,8 +153,12 @@ VOID = VoidType()
 DATE = DateType()
 DATE_RANGE = DateRangeType()
 PRICE_SERIES = PriceSeriesType()
+BACKTEST_RESULT = BacktestResultType()
 STRATEGY = StrategyType()
 ANY = AnyType()
+ELEMENTWISE = ElementwiseType()
+ELEMENTWISE_INT = ElementwiseIntType()
+ERROR = ErrorType()
 
 
 class _GenericType(Type):
@@ -166,6 +205,12 @@ class FunctionType(Type):
 # docs/language-reference.md "Assignability" for the table rendered for
 # humans.
 #
+# Series widen element-wise (Series<Int> -> Series<Float>), handled in
+# is_assignable below rather than as a row here. That is sound only
+# because series are immutable values: a mutable container must be
+# invariant, or code holding it as Series<Float> could write a Float into
+# what another reference still believes is a Series<Int>.
+#
 # Note there is deliberately NO row for (Float, Series<Float>) or
 # similar: a bare scalar is never assignable to a Series, even though
 # both carry Float as their element type. Series operations (SMA, mean,
@@ -183,14 +228,20 @@ _WIDENING: dict[tuple[str, str], bool] = {
 
 
 def is_assignable(source: Type, target: Type) -> bool:
-    """ANY accepts anything (see AnyType). Otherwise: exact match is
-    always OK; Int -> Float widens; everything else -- including
-    Float -> Int narrowing, and any scalar -> Series/Matrix/Vector -- is
-    rejected."""
-    if target == ANY:
+    """ANY accepts anything (see AnyType) and ERROR is compatible with
+    everything (see ErrorType). Otherwise: exact match is always OK;
+    Int -> Float widens, and so does Series<Int> -> Series<Float>;
+    everything else -- including Float -> Int narrowing, and any
+    scalar -> Series/Matrix/Vector -- is rejected."""
+    if target == ANY or source == ERROR or target == ERROR:
         return True
     if source == target:
         return True
+    if target in (ELEMENTWISE, ELEMENTWISE_INT):
+        numeric = (INT, FLOAT)
+        return source in numeric or (isinstance(source, SeriesType) and source.elem in numeric)
+    if isinstance(source, SeriesType) and isinstance(target, SeriesType):
+        return is_assignable(source.elem, target.elem)
     return _WIDENING.get((str(source), str(target)), False)
 
 
@@ -203,6 +254,7 @@ _BASE_TYPES_BY_NAME: dict[str, Type] = {
     "Date": DATE,
     "DateRange": DATE_RANGE,
     "PriceSeries": PRICE_SERIES,
+    "BacktestResult": BACKTEST_RESULT,
 }
 
 # Generic quant types -- annotation syntax is `Name[ElemType]` (brackets,

@@ -23,9 +23,12 @@ resolver only validates plain value references and assignments.
 
 from __future__ import annotations
 
+import difflib
+
 from allie.ast.nodes import (
     ArrayLiteral,
     Assignment,
+    Backtest,
     BacktestStmt,
     Binary,
     Block,
@@ -41,6 +44,7 @@ from allie.ast.nodes import (
     Identifier,
     IfStmt,
     ImportStmt,
+    Index,
     LetStmt,
     Logical,
     NumberLiteral,
@@ -63,6 +67,14 @@ class Scope:
 
     def declare(self, name: str) -> None:
         self.names.add(name)
+
+    def visible_names(self) -> set[str]:
+        names: set[str] = set()
+        scope: Scope | None = self
+        while scope is not None:
+            names.update(scope.names)
+            scope = scope.parent
+        return names
 
     def is_declared(self, name: str) -> bool:
         scope: Scope | None = self
@@ -125,10 +137,9 @@ class Resolver:
         elif isinstance(stmt, StrategyDecl):
             self._resolve_strategy(stmt)
         elif isinstance(stmt, BacktestStmt):
-            if not self.scope.is_declared(stmt.strategy_name):
-                self.diagnostics.error(
-                    f"backtest refers to undeclared strategy '{stmt.strategy_name}'", stmt.span
-                )
+            self._resolve_backtest(stmt.strategy_name, stmt.span)
+            for part in (stmt.start, stmt.end, *(option.value for option in stmt.options)):
+                self._resolve_expr(part)
         elif isinstance(stmt, ExprStmt):
             self._resolve_expr(stmt.expression)
         elif isinstance(stmt, Block):
@@ -200,11 +211,18 @@ class Resolver:
             self._resolve_when_clause(clause)
         self.inside_strategy = was_inside_strategy
 
+    def _resolve_backtest(self, strategy_name: str, span: SourceSpan) -> None:
+        if not self.scope.is_declared(strategy_name):
+            self.diagnostics.error(
+                f"backtest refers to undeclared strategy '{strategy_name}'",
+                span,
+                hint=self._suggest(strategy_name),
+            )
+
     def _resolve_when_clause(self, clause: WhenClause) -> None:
         if not self.inside_strategy:
             self.diagnostics.error("'when' clause outside a strategy", clause.span)
-        self._resolve_expr(clause.left)
-        self._resolve_expr(clause.right)
+        self._resolve_expr(clause.condition)
         was_inside_when = self.inside_when
         # Same reasoning as _resolve_function: a `when` action is a
         # per-bar callback the backtest engine invokes, so a loop
@@ -219,16 +237,31 @@ class Resolver:
 
     # ---- expressions ----
 
+    def _suggest(self, name: str) -> str | None:
+        """A "did you mean" hint when a declared name is a near miss."""
+        names = sorted(self.scope.visible_names())
+        for candidate in names:
+            if candidate.lower() == name.lower():
+                return f"did you mean '{candidate}'?"
+        matches = difflib.get_close_matches(name, names, n=1, cutoff=0.75)
+        return f"did you mean '{matches[0]}'?" if matches else None
+
     def _resolve_expr(self, expr: Expr) -> None:
         if isinstance(expr, (NumberLiteral, StringLiteral, BoolLiteral)):
             return
         if isinstance(expr, Identifier):
             if not self.scope.is_declared(expr.name):
-                self.diagnostics.error(f"undefined name '{expr.name}'", expr.span)
+                self.diagnostics.error(
+                    f"undefined name '{expr.name}'", expr.span, hint=self._suggest(expr.name)
+                )
             return
         if isinstance(expr, Assignment):
             if not self.scope.is_declared(expr.name):
-                self.diagnostics.error(f"cannot assign to undefined name '{expr.name}'", expr.span)
+                self.diagnostics.error(
+                    f"cannot assign to undefined name '{expr.name}'",
+                    expr.span,
+                    hint=self._suggest(expr.name),
+                )
             self._resolve_expr(expr.value)
             return
         if isinstance(expr, Unary):
@@ -248,6 +281,15 @@ class Resolver:
             return
         if isinstance(expr, FieldAccess):
             self._resolve_expr(expr.obj)
+            return
+        if isinstance(expr, Index):
+            self._resolve_expr(expr.obj)
+            self._resolve_expr(expr.index)
+            return
+        if isinstance(expr, Backtest):
+            self._resolve_backtest(expr.strategy_name, expr.span)
+            for part in (expr.start, expr.end, *(option.value for option in expr.options)):
+                self._resolve_expr(part)
             return
         if isinstance(expr, ArrayLiteral):
             for element in expr.elements:

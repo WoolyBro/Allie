@@ -9,7 +9,7 @@ update this file in the same commit, don't let code and doc drift apart.
 | Decision | Choice | Why |
 |---|---|---|
 | Execution model | Tree-walking interpreter (v1) | Fastest path to a correct end-to-end system. Bytecode VM and transpile-to-Python/numpy are documented alternatives (see below), not ruled out — but rewriting an interpreter's *semantics* later is far more expensive than rewriting its *execution strategy*, so this is the safe order. |
-| Typing | Gradual/optional (`Series[float]`) | Dynamic by default; annotations enable a lightweight checker (not Hindley-Milner). Catches `Series[float] + Series[str]` before a 10-year backtest runs, without demanding full static typing from day one. |
+| Typing | Static, with local inference (`Series[Float]`) | `let` annotations optional (inferred), function signatures required; no dynamic type, not Hindley-Milner. Catches `Series[Float] - String` before a 10-year backtest runs. (Originally planned as gradual/dynamic-by-default; shipped as static so that every program that type-checks runs identically on all three backends.) |
 | Numeric precision | `float64` for prices/returns/indicators; a distinct `Decimal`-backed `Money` type for the accounting ledger (cash, P&L) | Speed matters for indicator math and relative error is tolerable there. Compounding float error across thousands of trades in the ledger is a real correctness bug, not a rounding curiosity. |
 | Pandas dependency | Yes (`numpy` + `pandas`) | Don't reimplement `DatetimeIndex` / time-series alignment. `allie.quant.types.Series` wraps a `pandas.Series` rather than replacing it. |
 | Syntax style | **Brace-based**, not indentation-significant | An indentation-based lexer needs stateful INDENT/DEDENT tracking on top of everything else the lexer already has to do (numeric literals, string interpolation, spans). Brace-based is strictly less lexer complexity for the same v1 deadline. Python-like indentation is a plausible v2 ergonomics improvement, not a v1 requirement — revisit once the grammar is stable. |
@@ -44,7 +44,7 @@ down now so it's a decision, not something discovered under pressure in
 week 6:
 
 **Ship for v1:**
-- Tree-walking interpreter, brace-based syntax, gradual typing
+- Tree-walking interpreter, brace-based syntax, static typing with local inference
 - The 5 target indicators (MA, MACD, RSI, Bollinger, EMA)
 - Event-driven backtest loop with a first-class slippage/cost model
 - Walk-forward / out-of-sample split tooling

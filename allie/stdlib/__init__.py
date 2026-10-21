@@ -9,9 +9,13 @@ allie.cli.run_command).
 """
 
 from allie.stdlib import (
+    indexing,
+    indicators,
     io,
     math_fns,
     matrix_ops,
+    numeric,
+    risk,
     series_ops,
     significance,
     stats_fns,
@@ -23,9 +27,13 @@ __all__ = [
     "BUILTINS",
     "builtin_function_types",
     "create_global_environment",
+    "indexing",
+    "indicators",
     "io",
     "math_fns",
     "matrix_ops",
+    "numeric",
+    "risk",
     "series_ops",
     "significance",
     "stats_fns",

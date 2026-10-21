@@ -86,9 +86,7 @@ def test_when_clause_outside_strategy() -> None:
     span = SourceSpan(line=1, column=1, offset=0)
     clause = WhenClause(
         span=span,
-        left=BoolLiteral(span=span, value=True),
-        operator="crosses_above",
-        right=BoolLiteral(span=span, value=True),
+        condition=BoolLiteral(span=span, value=True),
         body=ExprStmt(span=span, expression=BoolLiteral(span=span, value=True)),
     )
     resolver = Resolver()

@@ -19,6 +19,18 @@ this API drifts across versions:
   `None`) when the module never referenced that symbol -- verified
   directly rather than guessed, since guessing wrong here would silently
   skip binding a symbol the module actually needs.
+
+## LLVM's own optimizer
+
+At `opt_level` 1-3 (2 by default; `allie run --no-optimize` passes 0)
+the module runs through LLVM's standard pipeline for that level -- the
+new pass manager's `PassBuilder`, the same `-O2` clang uses -- before
+code generation. That is where compiled code actually gets fast: our
+lowering keeps every variable in an `alloca`, and `mem2reg`/SROA turn
+those into registers, after which LICM, GVN, instcombine and the loop
+passes have something to work with. Nothing in it relaxes semantics:
+no fast-math, so NaN, signed zeros and `%` behave exactly as unoptimized
+-- the optimizer fuzz test runs every program both ways and compares.
 """
 
 from __future__ import annotations
@@ -30,6 +42,7 @@ import llvmlite.binding as llvm
 import llvmlite.ir as ir
 
 from allie.codegen import runtime_bridge
+from allie.codegen.llvm_lowering import ERROR_FLAG
 from allie.quant.backtest_engine import register_when_body
 
 _initialized = False
@@ -67,6 +80,7 @@ _BRIDGES: dict[str, tuple[type[ctypes._FuncPointer], Callable[..., object]]] = {
         ctypes.CFUNCTYPE(_I64, _I64),
         runtime_bridge.raise_runtime_error_bridge,
     ),
+    "locate_error_bridge": (ctypes.CFUNCTYPE(_I64, _I64), runtime_bridge.locate_error_bridge),
     "call_builtin_bridge": (
         ctypes.CFUNCTYPE(_I64, _I64, _I64, _I64, _I64, _I64, _I64),
         runtime_bridge.call_builtin_bridge,
@@ -74,12 +88,34 @@ _BRIDGES: dict[str, tuple[type[ctypes._FuncPointer], Callable[..., object]]] = {
 }
 
 
-def compile_and_run(module: ir.Module, entry_fn_name: str) -> None:
+class JITError(Exception):
+    """LLVM rejected the module this compiler generated -- always a
+    compiler bug, reported as such rather than as a raw traceback."""
+
+
+def _optimize(backing_mod: llvm.ModuleRef, target_machine: llvm.TargetMachine, level: int) -> None:
+    tuning = llvm.PipelineTuningOptions(speed_level=level)
+    pass_builder = llvm.create_pass_builder(target_machine, tuning)
+    pass_builder.getModulePassManager().run(backing_mod, pass_builder)
+
+
+def compile_and_run(
+    module: ir.Module,
+    entry_fn_name: str,
+    *,
+    opt_level: int = 2,
+    show_optimized_ir: Callable[[str], None] | None = None,
+    on_ready: Callable[[], None] | None = None,
+) -> None:
     """Parses/verifies `module`, JIT-compiles it, binds every bridge
     symbol it actually references to its Python implementation, and
     calls `entry_fn_name` (must take no arguments and return nothing --
     the shape `allie.codegen.llvm_lowering.LLVMLowering.lower_main`
     produces).
+
+    `on_ready`, if given, is called once the machine code exists and
+    just before it runs -- the boundary the benchmark harness times
+    LLVM's code generation and the native run against.
 
     Re-raises any error the runtime bridge recorded during the run
     (`allie.codegen.runtime_bridge`'s module docstring explains why a
@@ -91,9 +127,17 @@ def compile_and_run(module: ir.Module, entry_fn_name: str) -> None:
     runtime_bridge.take_pending_exception()  # discard any stale flag
 
     target = llvm.Target.from_default_triple()
-    target_machine = target.create_target_machine()
-    backing_mod = llvm.parse_assembly(str(module))
-    backing_mod.verify()
+    target_machine = target.create_target_machine(opt=opt_level)
+    try:
+        backing_mod = llvm.parse_assembly(str(module))
+        backing_mod.verify()
+        if opt_level > 0:
+            _optimize(backing_mod, target_machine, opt_level)
+            backing_mod.verify()
+    except RuntimeError as error:
+        raise JITError(f"LLVM rejected the generated code: {error}") from error
+    if show_optimized_ir is not None and opt_level > 0:
+        show_optimized_ir(str(backing_mod))
 
     engine = llvm.create_mcjit_compiler(backing_mod, target_machine)
 
@@ -115,6 +159,14 @@ def compile_and_run(module: ir.Module, entry_fn_name: str) -> None:
     engine.finalize_object()
     engine.run_static_constructors()
 
+    try:
+        backing_mod.get_global_variable(ERROR_FLAG)
+    except NameError:
+        flag_address = None  # nothing in this module can fail
+    else:
+        flag_address = engine.get_global_value_address(ERROR_FLAG)
+    runtime_bridge.set_error_flag_address(flag_address)
+
     # Publish each JIT-compiled `when` body as a zero-argument callable
     # the backtest engine can invoke per-bar. The IR interpreter fills
     # the same dispatch table with closures over `run_ir_program` -- so
@@ -133,10 +185,13 @@ def compile_and_run(module: ir.Module, entry_fn_name: str) -> None:
     if fn_ptr == 0:
         raise RuntimeError(f"JIT engine produced a null address for '{entry_fn_name}'")
     entry_cfunc = ctypes.CFUNCTYPE(None)(fn_ptr)
+    if on_ready is not None:
+        on_ready()
     try:
         entry_cfunc()  # keepalive/engine must still be alive at this point
     finally:
         keepalive.clear()
+        runtime_bridge.set_error_flag_address(None)
 
     pending = runtime_bridge.take_pending_exception()
     runtime_bridge.clear_registry()

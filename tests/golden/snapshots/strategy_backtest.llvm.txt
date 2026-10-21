@@ -5,51 +5,196 @@ target datalayout = ""
 define void @"__when_body_MovingAverage_0"()
 {
 entry:
-  %".2" = call i64 @"call_builtin_bridge"(i64 <handle>, i64 0, i64 0, i64 0, i64 0, i64 0)
+  %".2" = load i64, i64* @"__allie_depth"
+  %".3" = add i64 %".2", 1
+  store i64 %".3", i64* @"__allie_depth"
+  %".5" = icmp sgt i64 %".3", 10000
+  br i1 %".5", label %"runtime_error", label %"guard_ok"
+runtime_error:
+  %".7" = call i64 @"raise_runtime_error_bridge"(i64 <handle>)
+  %".8" = load i64, i64* @"__allie_depth"
+  %".9" = sub i64 %".8", 1
+  store i64 %".9", i64* @"__allie_depth"
+  ret void
+guard_ok:
+  %".12" = call i64 @"call_builtin_bridge"(i64 <handle>, i64 0, i64 0, i64 0, i64 0, i64 0)
+  %".13" = load i8, i8* @"__allie_error"
+  %".14" = icmp ne i8 %".13", 0
+  br i1 %".14", label %"error_exit", label %"no_error"
+error_exit:
+  %".16" = call i64 @"locate_error_bridge"(i64 <handle>)
+  %".17" = load i64, i64* @"__allie_depth"
+  %".18" = sub i64 %".17", 1
+  store i64 %".18", i64* @"__allie_depth"
+  ret void
+no_error:
+  %".21" = load i64, i64* @"__allie_depth"
+  %".22" = sub i64 %".21", 1
+  store i64 %".22", i64* @"__allie_depth"
   ret void
 }
 
 define void @"__when_body_MovingAverage_1"()
 {
 entry:
-  %".2" = call i64 @"call_builtin_bridge"(i64 <handle>, i64 0, i64 0, i64 0, i64 0, i64 0)
+  %".2" = load i64, i64* @"__allie_depth"
+  %".3" = add i64 %".2", 1
+  store i64 %".3", i64* @"__allie_depth"
+  %".5" = icmp sgt i64 %".3", 10000
+  br i1 %".5", label %"runtime_error", label %"guard_ok"
+runtime_error:
+  %".7" = call i64 @"raise_runtime_error_bridge"(i64 <handle>)
+  %".8" = load i64, i64* @"__allie_depth"
+  %".9" = sub i64 %".8", 1
+  store i64 %".9", i64* @"__allie_depth"
+  ret void
+guard_ok:
+  %".12" = call i64 @"call_builtin_bridge"(i64 <handle>, i64 0, i64 0, i64 0, i64 0, i64 0)
+  %".13" = load i8, i8* @"__allie_error"
+  %".14" = icmp ne i8 %".13", 0
+  br i1 %".14", label %"error_exit", label %"no_error"
+error_exit:
+  %".16" = call i64 @"locate_error_bridge"(i64 <handle>)
+  %".17" = load i64, i64* @"__allie_depth"
+  %".18" = sub i64 %".17", 1
+  store i64 %".18", i64* @"__allie_depth"
+  ret void
+no_error:
+  %".21" = load i64, i64* @"__allie_depth"
+  %".22" = sub i64 %".21", 1
+  store i64 %".22", i64* @"__allie_depth"
   ret void
 }
 
+@"__allie_depth" = global i64 0
+declare i64 @"raise_runtime_error_bridge"(i64 %".1")
+
 declare i64 @"call_builtin_bridge"(i64 %".1", i64 %".2", i64 %".3", i64 %".4", i64 %".5", i64 %".6")
+
+@"__allie_error" = global i8 0
+declare i64 @"locate_error_bridge"(i64 %".1")
 
 define void @"__allie_main"()
 {
 entry:
-  %".2" = call i64 @"call_builtin_bridge"(i64 <handle>, i64 <handle>, i64 0, i64 0, i64 0, i64 1)
   %"AAPL_ptr" = alloca i64
+  %"fast_ptr" = alloca i64
+  %"slow_ptr" = alloca i64
+  %".2" = call i64 @"call_builtin_bridge"(i64 <handle>, i64 <handle>, i64 0, i64 0, i64 0, i64 1)
+  %".3" = load i8, i8* @"__allie_error"
+  %".4" = icmp ne i8 %".3", 0
+  br i1 %".4", label %"error_exit", label %"no_error"
+error_exit:
+  %".6" = call i64 @"locate_error_bridge"(i64 <handle>)
+  ret void
+no_error:
   store i64 %".2", i64* %"AAPL_ptr"
   %"r2" = load i64, i64* %"AAPL_ptr"
-  %".4" = call i64 @"member_get_bridge"(i64 %"r2", i64 <handle>)
-  %".5" = call i64 @"box_int"(i64 5)
-  %".6" = call i64 @"call_builtin_bridge"(i64 <handle>, i64 %".4", i64 %".5", i64 0, i64 0, i64 2)
-  %"fast_ptr" = alloca i64
-  store i64 %".6", i64* %"fast_ptr"
+  %".9" = call i64 @"member_get_bridge"(i64 %"r2", i64 <handle>)
+  %".10" = load i8, i8* @"__allie_error"
+  %".11" = icmp ne i8 %".10", 0
+  br i1 %".11", label %"error_exit.1", label %"no_error.1"
+error_exit.1:
+  %".13" = call i64 @"locate_error_bridge"(i64 <handle>)
+  ret void
+no_error.1:
+  %".15" = call i64 @"box_int"(i64 5)
+  %".16" = call i64 @"call_builtin_bridge"(i64 <handle>, i64 %".9", i64 %".15", i64 0, i64 0, i64 2)
+  %".17" = load i8, i8* @"__allie_error"
+  %".18" = icmp ne i8 %".17", 0
+  br i1 %".18", label %"error_exit.2", label %"no_error.2"
+error_exit.2:
+  %".20" = call i64 @"locate_error_bridge"(i64 <handle>)
+  ret void
+no_error.2:
+  store i64 %".16", i64* %"fast_ptr"
   %"r6" = load i64, i64* %"AAPL_ptr"
-  %".8" = call i64 @"member_get_bridge"(i64 %"r6", i64 <handle>)
-  %".9" = call i64 @"box_int"(i64 20)
-  %".10" = call i64 @"call_builtin_bridge"(i64 <handle>, i64 %".8", i64 %".9", i64 0, i64 0, i64 2)
-  %"slow_ptr" = alloca i64
-  store i64 %".10", i64* %"slow_ptr"
-  %".12" = call i64 @"call_builtin_bridge"(i64 <handle>, i64 <handle>, i64 0, i64 0, i64 0, i64 1)
+  %".23" = call i64 @"member_get_bridge"(i64 %"r6", i64 <handle>)
+  %".24" = load i8, i8* @"__allie_error"
+  %".25" = icmp ne i8 %".24", 0
+  br i1 %".25", label %"error_exit.3", label %"no_error.3"
+error_exit.3:
+  %".27" = call i64 @"locate_error_bridge"(i64 <handle>)
+  ret void
+no_error.3:
+  %".29" = call i64 @"box_int"(i64 20)
+  %".30" = call i64 @"call_builtin_bridge"(i64 <handle>, i64 %".23", i64 %".29", i64 0, i64 0, i64 2)
+  %".31" = load i8, i8* @"__allie_error"
+  %".32" = icmp ne i8 %".31", 0
+  br i1 %".32", label %"error_exit.4", label %"no_error.4"
+error_exit.4:
+  %".34" = call i64 @"locate_error_bridge"(i64 <handle>)
+  ret void
+no_error.4:
+  store i64 %".30", i64* %"slow_ptr"
+  %".37" = call i64 @"call_builtin_bridge"(i64 <handle>, i64 <handle>, i64 0, i64 0, i64 0, i64 1)
+  %".38" = load i8, i8* @"__allie_error"
+  %".39" = icmp ne i8 %".38", 0
+  br i1 %".39", label %"error_exit.5", label %"no_error.5"
+error_exit.5:
+  %".41" = call i64 @"locate_error_bridge"(i64 <handle>)
+  ret void
+no_error.5:
   %"r12" = load i64, i64* %"fast_ptr"
   %"r13" = load i64, i64* %"slow_ptr"
-  %".13" = call i64 @"call_builtin_bridge"(i64 <handle>, i64 <handle>, i64 %"r12", i64 %"r13", i64 0, i64 3)
-  %"r15" = load i64, i64* %"fast_ptr"
-  %"r16" = load i64, i64* %"slow_ptr"
-  %".14" = call i64 @"call_builtin_bridge"(i64 <handle>, i64 <handle>, i64 %"r15", i64 %"r16", i64 0, i64 3)
-  %"r18" = load i64, i64* %"AAPL_ptr"
-  %".15" = call i64 @"box_int"(i64 0)
-  %".16" = call i64 @"box_int"(i64 100)
-  %".17" = call i64 @"call_builtin_bridge"(i64 <handle>, i64 <handle>, i64 %"r18", i64 %".15", i64 %".16", i64 4)
+  %".43" = call i64 @"binop_bridge"(i64 <handle>, i64 %"r12", i64 %"r13")
+  %".44" = load i8, i8* @"__allie_error"
+  %".45" = icmp ne i8 %".44", 0
+  br i1 %".45", label %"error_exit.6", label %"no_error.6"
+error_exit.6:
+  %".47" = call i64 @"locate_error_bridge"(i64 <handle>)
+  ret void
+no_error.6:
+  %".49" = call i64 @"call_builtin_bridge"(i64 <handle>, i64 <handle>, i64 %".43", i64 0, i64 0, i64 2)
+  %".50" = load i8, i8* @"__allie_error"
+  %".51" = icmp ne i8 %".50", 0
+  br i1 %".51", label %"error_exit.7", label %"no_error.7"
+error_exit.7:
+  %".53" = call i64 @"locate_error_bridge"(i64 <handle>)
+  ret void
+no_error.7:
+  %"r16" = load i64, i64* %"fast_ptr"
+  %"r17" = load i64, i64* %"slow_ptr"
+  %".55" = call i64 @"binop_bridge"(i64 <handle>, i64 %"r16", i64 %"r17")
+  %".56" = load i8, i8* @"__allie_error"
+  %".57" = icmp ne i8 %".56", 0
+  br i1 %".57", label %"error_exit.8", label %"no_error.8"
+error_exit.8:
+  %".59" = call i64 @"locate_error_bridge"(i64 <handle>)
+  ret void
+no_error.8:
+  %".61" = call i64 @"call_builtin_bridge"(i64 <handle>, i64 <handle>, i64 %".55", i64 0, i64 0, i64 2)
+  %".62" = load i8, i8* @"__allie_error"
+  %".63" = icmp ne i8 %".62", 0
+  br i1 %".63", label %"error_exit.9", label %"no_error.9"
+error_exit.9:
+  %".65" = call i64 @"locate_error_bridge"(i64 <handle>)
+  ret void
+no_error.9:
+  %"r20" = load i64, i64* %"AAPL_ptr"
+  %".67" = call i64 @"box_int"(i64 0)
+  %".68" = call i64 @"box_int"(i64 100)
+  %".69" = call i64 @"call_builtin_bridge"(i64 <handle>, i64 <handle>, i64 %"r20", i64 %".67", i64 %".68", i64 4)
+  %".70" = load i8, i8* @"__allie_error"
+  %".71" = icmp ne i8 %".70", 0
+  br i1 %".71", label %"error_exit.10", label %"no_error.10"
+error_exit.10:
+  %".73" = call i64 @"locate_error_bridge"(i64 <handle>)
+  ret void
+no_error.10:
+  %".75" = call i64 @"call_builtin_bridge"(i64 <handle>, i64 %".69", i64 0, i64 0, i64 0, i64 1)
+  %".76" = load i8, i8* @"__allie_error"
+  %".77" = icmp ne i8 %".76", 0
+  br i1 %".77", label %"error_exit.11", label %"no_error.11"
+error_exit.11:
+  %".79" = call i64 @"locate_error_bridge"(i64 <handle>)
+  ret void
+no_error.11:
   ret void
 }
 
 declare i64 @"member_get_bridge"(i64 %".1", i64 %".2")
 
 declare i64 @"box_int"(i64 %".1")
+
+declare i64 @"binop_bridge"(i64 %".1", i64 %".2", i64 %".3")

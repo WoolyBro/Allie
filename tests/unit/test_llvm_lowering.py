@@ -15,7 +15,7 @@ import pytest
 
 import allie.stdlib as stdlib
 from allie.codegen.jit import compile_and_run
-from allie.codegen.llvm_lowering import LLVMLowering, LLVMLoweringError
+from allie.codegen.llvm_lowering import LLVMLowering
 from allie.ir.lowering import lower_program
 from allie.lexer.lexer import Lexer
 from allie.parser.parser import Parser
@@ -61,7 +61,7 @@ def test_int_float_promotion() -> None:
 
 def test_division_by_zero_raises() -> None:
     with pytest.raises(AllieValueError):
-        _run_llvm("let x: Int = 1 / 0; print(x);")
+        _run_llvm("let x: Float = 1 / 0; print(x);")
 
 
 def test_division_by_runtime_zero_raises_without_crashing() -> None:
@@ -70,7 +70,7 @@ def test_division_by_runtime_zero_raises_without_crashing() -> None:
     # that traps and kills the process -- if the emitted guard fell
     # through to the division instead of returning early.
     with pytest.raises(AllieValueError):
-        _run_llvm("let x: Int = 10; let y: Int = 0; let z: Int = x / y; print(z);")
+        _run_llvm("let x: Int = 10; let y: Int = 0; let z: Float = x / y; print(z);")
 
 
 def test_division_by_zero_inside_non_void_function_raises() -> None:
@@ -79,7 +79,7 @@ def test_division_by_zero_inside_non_void_function_raises() -> None:
     with pytest.raises(AllieValueError):
         _run_llvm(
             """
-            func divide(a: Int, b: Int) -> Int {
+            func divide(a: Int, b: Int) -> Float {
                 return a / b;
             }
             print(divide(10, 0));
@@ -209,13 +209,19 @@ def test_mean_bridge_result_used_in_native_arithmetic() -> None:
     assert out.strip() == "4.0"
 
 
-def test_non_scalar_user_function_param_raises_clear_error() -> None:
-    with pytest.raises(LLVMLoweringError):
-        _run_llvm(
-            """
-            func total(prices: Series[Float]) -> Float {
-                return mean(prices);
-            }
-            print(total([1.0, 2.0]));
-            """
-        )
+def test_user_functions_can_take_and_return_series() -> None:
+    # Series cross a native call as boxed handles, like any other
+    # non-scalar value.
+    out = _run_llvm(
+        """
+        func total(prices: Series[Float]) -> Float {
+            return mean(prices);
+        }
+        func smooth(prices: Series[Float], n: Int) -> Series[Float] {
+            return SMA(prices, n);
+        }
+        print(total([1.0, 2.0]));
+        print(smooth([1.0, 2.0, 3.0], 2));
+        """
+    )
+    assert out.split("\n")[:2] == ["1.5", "Series[nan, 1.5, 2.5]"]

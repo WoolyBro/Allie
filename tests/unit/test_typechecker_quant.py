@@ -90,11 +90,13 @@ def test_let_series_from_bare_float_fails() -> None:
         _check("let x: Series[Float] = 1.0;")
 
 
-def test_series_int_not_assignable_to_series_float() -> None:
-    # Series<Int> -> Series<Float> does NOT widen even though Int -> Float
-    # does for bare scalars -- is_assignable only widens exact primitive
-    # pairs in _WIDENING, and Series<Int> != Series<Float> structurally.
-    assert not is_assignable(SeriesType(INT), SeriesType(FLOAT))
+def test_series_int_widens_to_series_float() -> None:
+    # Series widen element-wise, like the scalars they hold. Sound only
+    # because series are immutable: nothing can write a Float into a
+    # series another reference still sees as Series<Int>.
+    assert is_assignable(SeriesType(INT), SeriesType(FLOAT))
+    assert not is_assignable(SeriesType(FLOAT), SeriesType(INT))
+    assert not is_assignable(SeriesType(BOOL), SeriesType(FLOAT))
 
 
 # ---- array literals default to Series ----
@@ -138,35 +140,39 @@ def test_when_clause_with_series_float_operands_passes() -> None:
     )
 
 
-def test_when_clause_with_scalar_operand_fails() -> None:
-    with pytest.raises(QSTypeError):
-        _check(
-            """
-            strategy S {
-                when 1.0 crosses_above [1.0, 2.0]: buy();
-            }
-            """
-        )
+def test_a_crossing_against_a_number_is_a_level_crossing() -> None:
+    # The scalar side is broadcast: `rsi crosses_below 30.0`.
+    _check(
+        """
+        strategy S {
+            when 1.0 crosses_above [1.0, 2.0]: 1;
+        }
+        """
+    )
 
 
-def test_when_clause_with_series_int_operand_fails() -> None:
-    # Series<Int> is not Series<Float> -- no implicit per-element widening.
-    with pytest.raises(QSTypeError):
-        _check(
-            """
-            strategy S {
-                when [1, 2] crosses_above [1.0, 2.0]: buy();
-            }
-            """
-        )
+def test_a_crossing_needs_a_series_on_at_least_one_side() -> None:
+    with pytest.raises(QSTypeError, match="'crosses_above' compares series over time, got Float"):
+        _check("strategy S { when 1.0 crosses_above 2.0: 1; }")
+
+
+def test_when_clause_accepts_series_int_operand_by_widening() -> None:
+    _check(
+        """
+        strategy S {
+            when [1, 2] crosses_above [1.0, 2.0]: 1;
+        }
+        """
+    )
 
 
 def test_bool_still_rejected_where_series_float_expected() -> None:
-    with pytest.raises(QSTypeError):
+    message = "'crosses_above' isn't defined for Bool and Series<Float>"
+    with pytest.raises(QSTypeError, match=message):
         _check(
             """
             strategy S {
-                when true crosses_above [1.0, 2.0]: buy();
+                when true crosses_above [1.0, 2.0]: 1;
             }
             """
         )

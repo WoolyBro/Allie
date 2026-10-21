@@ -1,30 +1,28 @@
-"""IR instruction set -- Phase 5.1.
+"""IR instruction set.
 
-Flat list, not a basic-block/CFG structure: `IRProgram.instructions` is a
-single `list[IRInstr]` for v1. This is a deliberate simplification, not
-an oversight -- it constrains how sophisticated DCE/CSE can be (see
-allie/optimizer/dce.py's module docstring for the loop-carried-liveness
-consequence this creates), and it's exactly what lets Phase 6's LLVM
-lowering skip almost all control-flow-specific code: `for`/`while`/`if`
-are all just `Label`/`Jump`/`JumpIfFalse` here, and LLVM basic blocks
-fall out of a straightforward label-to-block translation later.
+Stored as a flat list: `IRProgram.instructions` is a single
+`list[IRInstr]`, which is what lowering emits and what both the IR
+interpreter and the LLVM backend consume -- `for`/`while`/`if` are all
+just `Label`/`Jump`/`JumpIfFalse` here, and LLVM basic blocks fall out of
+a straightforward label-to-block translation. Optimizer passes that need
+control flow build a graph on demand (allie/ir/cfg.py) instead of
+reasoning about text order, and allie/ir/verify.py checks the invariants
+every program must keep.
 
-Confirmed per Phase 5.1's own ask, not assumed: no new instruction is
-needed for `for`/`break`/`continue`, or for `strategy`/`when`/`backtest`
--- see allie/ir/lowering.py, which desugars all of them onto exactly the
-ops below (`ForStmt` reuses `WhileStmt`'s Label/Jump/JumpIfFalse shape;
-`break`/`continue` are just `Jump` to the right label; `strategy`/`when`/
-`backtest` lower to `Call`s into the not-yet-built Phase 7 backtest
-engine, invoked rather than inlined).
+No instruction is needed for `for`/`break`/`continue` or for
+`strategy`/`when`/`backtest`: allie/ir/lowering.py desugars all of them
+onto the ops below (`ForStmt` reuses `WhileStmt`'s Label/Jump/JumpIfFalse
+shape; `break`/`continue` are `Jump`s to the right label; the quant
+constructs lower to `Call`s into the backtest engine).
 
-One addition beyond the literal list, because lowering genuinely has no
-other way to do it: `Move(dest, src)`. Short-circuit `and`/`or` needs to
-converge two different possible source registers (the left operand, if
-it short-circuits; the right operand, if not) into one destination
-register representing the expression's result -- and this instruction
-set has no `JumpIfTrue` and no copy/phi instruction to do that
-convergence with. `Move` is the minimal fix; see `_lower_logical` in
-lowering.py for exactly how it's used.
+`Move(dest, src)` exists for short-circuit `and`/`or`, which has to
+converge two possible source registers (the left operand if it
+short-circuits, the right one if not) into one result register; it is
+the only instruction allowed to write a register more than once. Every
+other register is written exactly once, which the verifier enforces.
+
+`UnaryOp` carries `-`, `!`, and `to_float` -- an implicit Int -> Float
+widening the type checker made explicit (allie.ast.nodes.Widen).
 
 `dest`/operand fields reference virtual registers ("r0", "r1", ...),
 never variable names directly -- `RegisterAllocator.new_reg()` just
@@ -34,11 +32,40 @@ increments a counter; real register allocation is out of scope.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TypeVar
+
+from allie.errors import SourceSpan
+
+# UnaryOp operator for an implicit Int -> Float widening (a Widen node).
+TO_FLOAT = "to_float"
+
+# Prefix on a LoadVar/StoreVar name inside a function or `when` body that
+# refers to a module-level variable: `@rate` is the main program's `rate`.
+# `@` can't start a source identifier, so it never collides with a local.
+GLOBAL_PREFIX = "@"
 
 
 class IRInstr:
-    """Marker base for every IR instruction."""
+    """Marker base for every IR instruction.
+
+    `span` is the source position of the expression an instruction came
+    from, set by lowering on the instructions that can fail at run time
+    (LoadVar, BinOp, UnaryOp, MemberGet, Call), so a runtime error names
+    the same line and column on every backend. It is a plain attribute
+    rather than a dataclass field: it is not part of what an instruction
+    *does*, so it stays out of equality, `repr` and the golden snapshots.
+    A pass that rebuilds one of these carries it over with `located`."""
+
+    span: SourceSpan | None = None
+
+
+_Instr = TypeVar("_Instr", bound=IRInstr)
+
+
+def located(new: _Instr, old: IRInstr) -> _Instr:
+    """`new`, with `old`'s source span."""
+    new.span = old.span
+    return new
 
 
 @dataclass
@@ -121,6 +148,39 @@ class Return(IRInstr):
 @dataclass
 class IRProgram:
     instructions: list[IRInstr] = field(default_factory=list)
+    # True for a function (or `when`) body. Liveness needs it: a
+    # function may assign a module-level variable someone reads after
+    # it returns, so at a function's exit every variable counts as live;
+    # at the end of the main program, none does.
+    is_function: bool = False
+
+
+def reads(instr: IRInstr) -> list[str]:
+    """The registers `instr` reads."""
+    if isinstance(instr, BinOp):
+        return [instr.left, instr.right]
+    if isinstance(instr, UnaryOp):
+        return [instr.operand]
+    if isinstance(instr, (StoreVar, Move)):
+        return [instr.src]
+    if isinstance(instr, Call):
+        return list(instr.args)
+    if isinstance(instr, MemberGet):
+        return [instr.obj]
+    if isinstance(instr, JumpIfFalse):
+        return [instr.cond]
+    if isinstance(instr, Return):
+        return [instr.value] if instr.value is not None else []
+    return []
+
+
+def writes(instr: IRInstr) -> str | None:
+    """The register `instr` writes, if any."""
+    if isinstance(instr, (LoadConst, LoadVar, BinOp, UnaryOp, MemberGet, Move)):
+        return instr.dest
+    if isinstance(instr, Call):
+        return instr.dest
+    return None
 
 
 class RegisterAllocator:

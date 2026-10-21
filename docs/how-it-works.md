@@ -70,12 +70,24 @@ body, a `when` action. (That reset was missing until Phase 7; see §3.4.)
 
 ### Type-check → annotate every expression
 
-`allie/typechecker/checker.py`. Gradual typing: annotations are
+`allie/typechecker/checker.py`. Static typing with local inference: annotations are
 optional, but where present they're enforced. `Int` widens to `Float`;
 nothing narrows; a scalar is never assignable to a `Series`. Every
 expression node gets its resolved type written back onto it — which is
 what makes LLVM codegen possible later, since it needs to know whether
 `+` is an `add` or an `fadd`.
+
+### Look-ahead → reject decisions that could see the future
+
+`allie/semantic/lookahead.py`. A taint analysis over the typed AST.
+Sources give a value a taint: backward shifts, whole-series statistics,
+single bars, `len`, backtest statistics. The taint follows variables,
+branches, loops and calls. A decision that may carry it is a compile
+error: a `when` condition, a condition inside an action, an order size,
+a backtest option. The error points at the culprit, with notes that
+trace it back to the source. The pass runs last because it reads the
+types the checker wrote: `c[3]` is a source on a series and on nothing
+else. §3.5 covers how it's tested.
 
 ### Lower → IR
 
@@ -120,9 +132,12 @@ Notice there is no `For` instruction. The loop is `Label` +
 
 ### Optimize
 
-`allie/optimizer/`. Constant folding, dead-code elimination, common
-subexpression elimination. Each is a pure `IRProgram -> IRProgram`
-function; `--no-optimize` skips them. §3.4 is the interesting one.
+`allie/optimizer/`. Constant propagation and folding, dead-code
+elimination, common subexpression elimination. Each is a pure
+`IRProgram -> IRProgram` function; the first two are dataflow analyses
+over a control-flow graph built on demand. `--no-optimize` skips them;
+`--debug-ir` verifies the IR after every pass and prints what each one
+removed. §3.4 is the interesting part.
 
 ### LLVM → machine code
 
@@ -145,19 +160,18 @@ for_loop_0:
 if_end_4:
   %"r8" = load i64, i64* %"total_ptr"
   %"r9" = load i64, i64* %"i_ptr"
-  %".10" = mul i64 %"r9", 2
-  %".11" = add i64 %"r8", %".10"
-  store i64 %".11", i64* %"total_ptr"
-  br label %"for_increment_1"
+  %".10" = call {i64, i1} @"llvm.smul.with.overflow.i64"(i64 %"r9", i64 2)
+  %".11" = extractvalue {i64, i1} %".10", 1
+  br i1 %".11", label %"runtime_error", label %"guard_ok"
 for_increment_1:
   %"r13" = load i64, i64* %"i_ptr"
-  %".14" = add i64 %"r13", 1
-  store i64 %".14", i64* %"i_ptr"
-  br label %"for_loop_0"
+  %".24" = call {i64, i1} @"llvm.sadd.with.overflow.i64"(i64 %"r13", i64 1)
+  %".25" = extractvalue {i64, i1} %".24", 1
+  br i1 %".25", label %"runtime_error.2", label %"guard_ok.2"
 for_end_2:
   %"r16" = load i64, i64* %"total_ptr"
-  %".17" = call i64 @"box_int"(i64 %"r16")
-  %".18" = call i64 @"call_builtin_bridge"(i64 2757324001792, ...)
+  %".32" = call i64 @"box_int"(i64 %"r16")
+  %".33" = call i64 @"call_builtin_bridge"(i64 4438292448, i64 %".32", i64 0, i64 0, i64 0, i64 1)
   ret void
 cont:
   %"r5" = load i64, i64* %"i_ptr"
@@ -165,12 +179,38 @@ cont:
   br i1 %".7", label %"cont.1", label %"if_end_4"
 cont.1:
   br label %"for_increment_1"
+runtime_error:
+  %".13" = call i64 @"raise_runtime_error_bridge"(i64 4438147232)
+  ret void
+guard_ok:
+  %".15" = extractvalue {i64, i1} %".10", 0
+  %".16" = call {i64, i1} @"llvm.sadd.with.overflow.i64"(i64 %"r8", i64 %".15")
+  %".17" = extractvalue {i64, i1} %".16", 1
+  br i1 %".17", label %"runtime_error.1", label %"guard_ok.1"
+runtime_error.1:
+  %".19" = call i64 @"raise_runtime_error_bridge"(i64 4438147232)
+  ret void
+guard_ok.1:
+  %".21" = extractvalue {i64, i1} %".16", 0
+  store i64 %".21", i64* %"total_ptr"
+  br label %"for_increment_1"
+runtime_error.2:
+  %".27" = call i64 @"raise_runtime_error_bridge"(i64 4438147232)
+  ret void
+guard_ok.2:
+  %".29" = extractvalue {i64, i1} %".24", 0
+  store i64 %".29", i64* %"i_ptr"
+  br label %"for_loop_0"
 }
 ```
 
-The arithmetic is native `mul`/`add`/`icmp` on `i64`. The `print` call
-isn't — it goes through `call_builtin_bridge` back into Python (§3.3).
-That `2757324001792` is a pointer to a Python object, which is why LLVM
+The arithmetic is native `i64` code — `icmp` for the comparisons, and
+`mul`/`add` through LLVM's overflow-checking intrinsics
+(`llvm.smul.with.overflow`, ...), which branch to a `runtime_error`
+block instead of wrapping around: `Int` is 64-bit on every backend,
+and overflowing it is an error everywhere. The `print` call isn't
+native — it goes through `call_builtin_bridge` back into Python (§3.3).
+That `4438292448` is a pointer to a Python object, which is why LLVM
 dumps aren't byte-stable across runs and the golden tests normalize them.
 
 ### JIT
@@ -234,20 +274,30 @@ Scalars (`Int`/`Float`/`Bool`) *are* native — `add`, `fadd`, `icmp`.
 Everything else crosses the boundary as an opaque `i64` handle (the
 `id()` of a live Python object, kept alive by a registry).
 
-Is that a cop-out? Genuinely no, and the benchmarks say why: on quant
-workloads, ~99% of runtime is already inside numpy's C code. Compiling
-the thin Allie wrapper around a `numpy.mean` call can't speed up
-`numpy.mean`. Reimplementing vectorized rolling windows in LLVM IR to
-maybe match numpy is a large amount of work for a likely-zero gain.
+Is that a cop-out? Genuinely no, and the benchmarks say why: on the
+quant workloads the JIT's native run takes exactly as long as the
+interpreters' — the time is inside numpy, and compiling the thin Allie
+wrapper around a `numpy.mean` call can't speed up `numpy.mean`.
+Reimplementing vectorized rolling windows in LLVM IR to maybe match
+numpy is a large amount of work for a likely-zero gain.
 
 Meanwhile the part where compilation *does* pay — scalar arithmetic and
-control flow — is fully native, and that's exactly where the 127×
-speedup shows up (§4).
+control flow — is fully native, and that's where it shows: a loop
+iteration in ~0.4 ns against CPython's ~30 ns (§4).
 
-The honest cost: a user-defined function taking a `Series` parameter
-can't compile, and raises a clear error instead of silently misbehaving.
-Every real program calls *stdlib* functions for series work, so this
-hasn't bitten in practice — but it's a real limit, not a rounding error.
+User-defined functions can take and return series too: across a native
+call, a `Series` is just its boxed handle, the same way it travels
+everywhere else in compiled code.
+
+Before code generation the module goes through LLVM's own `-O2` pipeline
+(`allie/codegen/jit.py`). Lowering keeps every variable in a stack slot;
+`mem2reg` turns those into registers, and the loop passes take it from
+there. A 30-million-iteration Int loop runs 5.6× faster than at `-O0`,
+`fib(30)` 1.7×, a Float recurrence 2.3×. The price is about 2 ms of
+extra code generation per program, so `-O2` breaks even around a
+million loop iterations, and every benchmark workload is *slower* with
+optimization on: they finish before the faster code can pay for itself.
+`--no-optimize` turns LLVM's passes off along with Allie's.
 
 ### 3.4 A dead-code elimination bug that took a while to see
 
@@ -275,13 +325,17 @@ The read is real, it just happens *earlier in the list* — at the
 condition check — reached again through the back-edge `Jump`. Program
 order and execution order aren't the same thing once you have loops.
 
-The fix here is deliberately blunt: liveness asks "is this read
-*anywhere* in the program," not "read after this point." Position stops
-mattering, so back-edges stop being a special case. That is strictly
-more conservative than a proper dataflow analysis — it won't spot that
-the first write in `x = 1; x = 2; print(x);` is dead — and given the IR
-is a flat list with no control-flow graph, that's the honest trade.
-There's a regression test with that exact loop shape.
+The first fix was deliberately blunt: liveness asked "is this read
+*anywhere* in the program," not "read after this point." Position
+stopped mattering, so back-edges stopped being a special case — but it
+couldn't see that the first write in `x = 1; x = 2; print(x);` is dead.
+
+The real fix is a control-flow graph (`allie/ir/cfg.py`). The IR is
+still stored as a flat list, but DCE and constant propagation now build
+basic blocks with successor and predecessor edges and solve liveness
+and constants as proper dataflow problems — so a loop's back-edge is
+just an edge, and the dead first store is removed. There's a regression
+test with that exact loop shape.
 
 A related one turned up in CSE, which had the same blind spot from the
 other direction: it was reusing a register computed *before* a loop for
@@ -291,53 +345,126 @@ i.e. at every place control flow can merge.
 
 Both bugs share a root cause: a flat instruction list makes it easy to
 write a pass that reasons about text order when it should be reasoning
-about control flow.
+about control flow. A third one, the same shape again, survived until
+the IR got a verifier: CSE kept sharing *constants* across labels,
+reasoning that a literal's value doesn't depend on the path. The value
+doesn't; the register holding it does. `if flag { x = x + 7; }
+print(x + 7);` reused a register written only inside the `if`, and the
+IR backend crashed when `flag` was false. The verifier
+(`allie/ir/verify.py`) checks that every register is written before it
+is read on every path, runs after every optimizer pass in the tests, and
+flagged it the first time it ran.
+
+What keeps this class of bug from coming back is a differential fuzzer
+(`tests/unit/test_optimizer_fuzz.py`): random type-correct programs run
+on the tree-walker, the IR interpreter and the JIT, with the optimizer
+off and on, and all five must print the same thing — runtime errors
+included. Its first runs found two more bugs, both in the LLVM backend
+rather than the optimizer: a loop written after a `break` crashed
+codegen, and a variable whose first store sat inside a branch produced
+invalid LLVM.
+
+### 3.5 The look-ahead analysis is tested against an experiment
+
+A static analysis that claims soundness is only making a claim until
+something independent checks it. Here the independent check is the
+definition itself, run: a decision at bar t that changes when the bars
+after t are removed. `allie/semantic/audit.py` runs the program, then
+runs it again once per bar with `load` cut off at that bar. It compares
+each backtest's signals, orders and closed trades between the runs. It
+sees them through a hook in `run_backtest`, which every backend calls.
+
+`tests/unit/test_lookahead_audit.py` generates programs, and each draws
+how often it takes a leaky option, from never to often. The leaks
+include backward shifts; whole-series statistics in conditions, order
+sizes and stop levels; single bars; values picked by a branch on
+`mean(c)`; and counters a backtest's actions left behind. Every program
+the analysis accepts must pass the audit. Of the 300 seeded programs,
+182 are accepted and all of them pass. 104 are rejected and run, and 54
+of those change a decision on the sample data. The other 50 carry a
+leak this data happens not to trigger, such as a `zscore` inside a
+condition that is never true. Rejecting them is right, so the share of
+rejections the audit confirms doesn't measure over-strictness. A
+separate test does: one program per rule, in which the leak drives a
+trade, and the audit must catch each one.
+
+Building it found real gaps. Before the rewrite the analysis tracked
+only data flow, and only into `when` conditions. It let through:
+
+- a function returning a tainted global;
+- a taint carried from one loop iteration to the next;
+- `c > c[len(c) - 1]`;
+- `r.sharpe` in a condition;
+- `target(mean(c) / c[0])`;
+- an `if` on `mean(c)` inside an action;
+- a stop calibrated on the whole period's volatility.
+
+It also rejected honest programs like `let lag: Int = 1; shift(c, lag)`.
+Writing down what the audit would measure turned up three more leaks:
+
+- a value chosen by a branch on future data (control dependence);
+- `len(c)` inside a window;
+- a counter that a backtest's actions left behind.
+
+The REPL had a gap of its own: a submission rejected *before* it ran
+still updated the analysis's state, so `s = c; <something rejected>`
+made the analysis think `s` was clean when, at run time, it still held
+tomorrow's prices.
 
 ---
 
 ## 4. Benchmarks
 
-Full table and methodology in
-[`benchmarks/README.md`](../benchmarks/README.md); regenerate with
-`make bench`.
+Methodology and the full report: [`benchmarks/README.md`](../benchmarks/README.md)
+and [`benchmarks/results.md`](../benchmarks/results.md); regenerate with
+`make bench`. Every implementation is checked to compute the same answer
+as its Python twin before it's timed, and every ratio below has a 95%
+confidence interval in the report. Figures from the committed run on an
+Apple M5:
 
-| Workload | Family | Python | Allie (interp) | Allie (JIT, unopt) | Allie (JIT, opt) | LOC (Py) | LOC (Allie) |
-|---|---|---|---|---|---|---|---|
-| `sma_10k` | quant | 104.40 | 199.71 | 227.00 | 221.21 | 6 | 6 |
-| `rolling_std` | quant | 21.79 | 197.62 | 194.80 | 186.80 | 6 | 6 |
-| `backtest_ma` | quant | 2.70 | 3.02 | 12.93 | 12.89 | 20 | 8 |
-| `matmul_200` | quant | 1.51 | n/a | n/a | n/a | 3 | n/a |
-| `loop_sum` | pure-cs | 72.19 | 834.57 | 6.65 | 6.57 | 6 | 7 |
-| `blended_sweep` | blended | 7.04 | 4.85 | 14.95 | 14.76 | 8 | 7 |
+| | ns per loop iteration | fixed cost |
+|---|---|---|
+| Allie tree interpreter | ~800 | — |
+| Allie IR interpreter | ~900 | — |
+| CPython | ~30 | — |
+| Allie JIT, `-O0` | ~2.3 | ~1.5 ms of compilation |
+| Allie JIT, `-O2` | ~0.4 | ~3.9 ms of compilation |
 
 Three things this shows.
 
-**Compilation is worth a lot for control flow.** `loop_sum` — a plain
-50k-iteration loop, no quant content — goes from 835 ms interpreted to
-6.6 ms JIT-compiled. That's ~127×, and ~11× faster than the equivalent
-hand-written Python. This is the number the project actually earns.
+**Native code is fast, and compiling it costs real time.** The JIT runs a
+loop iteration roughly 75× faster than CPython and ~2,000× faster than
+the tree interpreter. But LLVM's code generation takes longer than a
+50k-iteration loop or `fib(20)` takes to run, so on those workloads the
+JIT's total is several times CPython's. A scaling study — the same loop
+at three sizes, fitted to *fixed + per-iteration × n* — is what tells
+those two costs apart; a single size can't.
 
 **Compilation is worth nothing for library-bound work.** On the quant
-rows Allie is *slower* than Python: both bottom out in the same numpy
-calls, and Allie pays front-end and bridge overhead on top. Expected,
-given §3.3. The interesting column there is LOC — the backtest is 8
-lines of Allie against 20 of Python.
+workloads the JIT's native run equals the interpreters', and code
+generation is overhead on top. Allie is 2–5× slower than pandas there,
+mostly in reading the CSV: `load_10k` alone is ~11 ms against pandas'
+~3.5 ms, because pandas parses in C. The interesting columns are LOC —
+the backtest is 10 lines of Allie against 18 of Python.
 
-**The optimizer barely moves the needle: low single-digit percent, near
-noise.** The passes act on scalar IR, and these workloads spend their
-time inside bridged calls the passes deliberately don't touch. The unit
-tests prove the transformations fire on hand-built IR; this table shows
-what that's worth on this mix of workloads. Reporting ~2% honestly beats
-constructing a workload that flatters it.
+**The optimizer costs more than it saves at these sizes.** `-O2` (Allie's
+passes and LLVM's) makes the native run up to 2× faster but costs ~2 ms
+more to compile, so it pays off only past about a million loop iterations;
+every workload here is slower overall with it on, by an interval that
+excludes 1. A JIT that chose its optimization level per program would
+take both.
 
-(`rolling_std` used to be 112× slower here — a real finding the
-benchmark surfaced, and a separate bug from anything compiler-related:
-the implementation was a per-window Python loop where pandas is
-vectorized. Rewriting it with `sliding_window_view` cut the gap to ~9×
-with bit-identical results. Worth noting the *tempting* fix — cumulative
-sums of `x` and `x²` — was rejected: it's faster still, but loses ~1e-08
-accuracy to catastrophic cancellation on exactly the large-mean,
-small-variance data this function exists to handle.)
+**The first version of these numbers was wrong.** It timed with
+`tracemalloc` running — slowing allocation-heavy Python several-fold —
+and counted LLVM's code generation as run time. Its "127× faster than
+the interpreter, 11× faster than Python" was mostly those two mistakes.
+Measuring the benchmark's own methodology is part of the benchmark.
+
+The benchmark has also pointed at real fixes: `rolling_std` was a
+per-window Python loop 112× slower than pandas (now vectorized and
+bit-identical; the faster running-sum formula was rejected for losing
+~1e-08 accuracy to cancellation), `load` parsed every cell with its own
+`float()` call, and the backtest engine indexed numpy arrays bar by bar.
 
 ---
 
@@ -345,14 +472,13 @@ small-variance data this function exists to handle.)
 
 Stated as v2 work, not apologies.
 
-**Flat IR, no control-flow graph.** Instructions are one list; basic
-blocks only appear at LLVM lowering. This is what made both bugs in §3.4
-possible, and it's why DCE has to be conservative. A real CFG with
-proper dataflow analysis would make the passes both safer and stronger.
+**Allie's own optimizer matters little to the JIT.** Its passes are real
+dataflow analyses (§3.4) and roughly halve the IR interpreter's time on
+constant-heavy loops, but for compiled code LLVM's `-O2` does that work
+and more. CSE is still local to each straight-line stretch.
 
-**LLVM codegen is scalar-only.** Series/Matrix operations bridge back to
-Python (§3.3). A user-defined function with a `Series` parameter is
-rejected at compile time rather than compiled.
+**Series work isn't compiled.** Series/Matrix operations bridge back to
+Python (§3.3); only scalar code is native.
 
 **`import` parses but resolves nothing.** `import "foo";` type-checks and
 is then ignored — there's no module loader, no path resolution, no
@@ -364,16 +490,9 @@ callback the backtest engine invokes per bar, so there's no enclosing
 loop to jump out of. Rejected at resolve time with a specific message. A
 loop written *inside* a `when` action is fine.
 
-**Runtime errors mostly lack line numbers.** `LexError` and `QSTypeError`
-carry line/column; runtime errors usually don't, because they're raised
-inside stdlib functions operating on data ("mean: series must not be
-empty") where no source position is available. Threading spans through
-the runtime is a v2 change.
+**No `Matrix` literal syntax.** A matrix is built from series —
+`matrix(values, rows, cols)`, `with_column` — rather than written out.
 
-**No `Matrix` literal syntax.** `Matrix[Float]` exists as a type and the
-matrix stdlib works, but nothing in the language can *construct* one —
-array literals produce `Series`. The matrix benchmark has no Allie
-implementation for exactly this reason, and says so.
-
-**Assignment targets only bare names.** No `arr[i] = x`, no
-`obj.field = x`.
+**Assignment targets only bare names.** `s[i]` reads an element, but
+series are immutable values, so there is no `s[i] = x`, and fields are
+read-only.

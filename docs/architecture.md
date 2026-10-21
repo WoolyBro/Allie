@@ -18,7 +18,9 @@ read [`how-it-works.md`](how-it-works.md) instead.
      ▼  allie/semantic/           Resolver       → scope + jump-placement checks
      │                                             loop_depth, inside_strategy, inside_when
      ▼  allie/typechecker/        Type checker   → annotates expr.inferred_type in place
-     │                                             gradual: optional annotations, enforced where present
+     │                                             static, local inference; reports every error
+     ▼  allie/semantic/           Look-ahead     → rejects decisions that could see a later bar
+     │                                             taint + sign analysis; audit.py tests it by experiment
      ▼  allie/ir/lowering.py      IR lowering    → flat instruction list, virtual registers
      │                                             `for` desugars to `while` shape HERE
      ▼  allie/optimizer/          Optimizer      → constant fold, DCE, CSE (toggleable)
@@ -40,9 +42,11 @@ implementations to go unnoticed.
 
 ## Lexer (`allie/lexer/`)
 
-**Does:** characters → tokens, each carrying line and column. Resolves
-keyword spellings through one `KEYWORD_ALIASES` dict, so `ts` and `let`
-both emit `TokenType.LET`.
+**Does:** characters → tokens, each carrying line, column and source
+offset (the lexeme is always the exact source slice, which a test checks
+against every program in the repo). Resolves keyword spellings through
+one `KEYWORD_ALIASES` dict, so `ts` and `let` both emit `TokenType.LET`.
+The full lexical rules are in `docs/grammar.md` "Lexical structure".
 
 **Why:** the alias table is the entire implementation of the slang
 keywords feature. Putting it here — a single dict lookup with no
@@ -54,24 +58,41 @@ information downstream. It also does not lowercase identifiers: lookup
 is case-sensitive on purpose, so `Ahhh` is `while` and `ahhh` is an
 identifier.
 
-An invalid character is recorded and scanning continues (so one bad
-character doesn't hide the rest of the file); an unterminated string
-raises immediately, since there's nothing left to resynchronize on.
+**Never raises.** Every lexical problem is recorded as a `LexError`
+(position, caret length, optional hint) and scanning resumes, so one
+run reports every problem in the file. Where the intent is obvious the
+lexer also emits the token that was meant — a `STRING` for an
+unterminated or single-quoted string, a `NUMBER` for `.5` — so the
+parser doesn't stack follow-on errors on the real one. A string can't
+span lines, which is what makes an unterminated one recoverable: the
+error stops at the end of its line instead of swallowing the file.
+A seeded fuzz test feeds it thousands of hostile inputs and checks that
+it never raises and that every position stays consistent.
 
 ## Parser (`allie/parser/parser.py`)
 
-**Does:** recursive descent, one method per grammar production,
-precedence climbing for expressions. Produces the dataclass AST in
-`allie/ast/nodes.py`.
+**Does:** recursive descent, one method per grammar production, one
+method per precedence level for expressions. Produces the dataclass AST
+in `allie/ast/nodes.py`, with every span carrying its real source
+offset.
 
 **Why:** hand-written rather than generated — the grammar is small
 enough that a parser generator would add a build step and a debugging
 layer for no benefit.
 
 **Does not:** type-check, resolve names, or evaluate anything. On error
-it records a `Diagnostic` and resynchronizes to the next statement
-boundary rather than raising, so one syntax error doesn't mask the next
-five.
+it records a `Diagnostic` (with a hint where the mistake is
+predictable) and recovers rather than raising, so one syntax error
+doesn't mask the next five. Recovery is deliberately local: it resumes
+at the next statement but never skips the `}` closing the current
+block, and a broken `when` clause costs only that clause — so one
+mistake produces one error, not a cascade (`test_parser_diagnostics.py`
+pins this on a file with six separate mistakes).
+
+**Limits:** nesting is capped at 64 levels and AST depth at 200, so a
+pathological input is one error rather than a Python `RecursionError`
+in the parser or in any later stage that walks the tree recursively. A
+test runs the deepest allowed program on all three backends.
 
 ## Resolver (`allie/semantic/resolver.py`)
 
@@ -100,14 +121,19 @@ selects a more specific error message; it deliberately does not subsume
 
 ## Type checker (`allie/typechecker/`)
 
-**Does:** gradual typing — annotations optional but enforced where
-present. Annotates `inferred_type` on every expression node in place,
-which is what makes LLVM codegen possible later (it needs to know
-whether `+` is `add` or `fadd`).
+**Does:** static typing with local inference — `let` annotations are
+optional (inferred from the initializer) but enforced where present.
+Annotates `inferred_type` on every expression node in place, which is
+what makes LLVM codegen possible later (it needs to know whether `+` is
+`add` or `fadd`). Rejects anything only some backends can run: function
+values, closures over an enclosing function's locals, duplicate
+function names, `Void` used as a value, series equality.
 
-**Why:** fail-fast (raises on first error) rather than collect-and-report
-like the parser. A cascade of type errors from one root cause is rarely
-more useful than the first one.
+**Why:** collect-and-report, like the parser, but without the cascade
+that usually argues for fail-fast: an expression that fails gets a
+poison type (`ERROR`) that every later check accepts silently, so one
+mistake is one error. `check()` still raises the first error once
+everything has been checked.
 
 **Does not:** infer function signatures. Every parameter and return type
 must be annotated, including `-> Void`. Partial inference that works
@@ -118,28 +144,62 @@ sometimes is harder to use than none.
 
 ## Look-ahead analysis (`allie/semantic/lookahead.py`)
 
-**Does:** a taint analysis over `Series` values. Data derived from a
-backwards time shift is tracked through variables, indicator calls, and
-user functions, and rejected where a `when` clause turns it into a
-trading decision.
+**Does:** a taint analysis that proves no trading decision can see a
+later bar. Sources (backward shifts, whole-series builtins, single bars,
+`len`, backtest statistics, state left by a backtest's actions,
+hand-built series) carry a taint. The taint flows through variables,
+operators, calls and field access to the sinks, which are the places a
+decision is made: `when` conditions, conditions inside actions,
+`target(...)` sizes, backtest options, and the conditions that decide
+whether a backtest runs.
 
 **Why:** `docs/spec.md`'s founding claim is that the language should
 make "you cannot see the future" structural rather than a discipline the
-author maintains. The backtest engine already enforced that at runtime —
-`buy()`/`sell()` can only read `close[current_index]` — but that
-constrains the *engine*, not the *data* handed to it. A strategy built
-on `shift(close, -1)` compiled fine and backtested at Sharpe 3.34 while
-the honest version scored −0.16. This pass closes the gap the runtime
-guarantee never covered.
+author maintains. The backtest engine enforces that at runtime: an order
+fills at the next bar's open. But that constrains the *engine*, not the
+*data* handed to it. A strategy built on `shift(close, -1)` compiled
+fine and backtested at Sharpe 3.34 while the honest version scored
+−0.16. This pass closes the gap the runtime guarantee never covered.
 
-**Does not:** flag future data used outside a `when` clause. The bias is
-deciding on future data, not touching it; post-hoc analysis is
-legitimate. It also cannot see data pre-shifted outside the language.
+**Design decision — flow-sensitive, with control dependence.** The state
+is a scope stack mapping each variable to its taint, whether it's proven
+non-negative (the sign analysis that accepts `shift(c, lag)`), and where
+it got its taint (for the notes). At an `if`, both branches are analyzed
+from the same state and joined. Loops run quietly to a fixpoint, then
+once more to report. Assignments under a tainted condition take its
+taint, so a value chosen by a branch on future data is caught. So is
+code after an `if` that may `break`, `continue` or `return`, until the
+loop or function ends.
 
-**Design decision — unprovable means rejected.** A `shift` whose period
-is not a literal is treated as unsafe. For a safety property, "cannot
-prove safe" has to mean "reject": a false positive is a compile error
-the user can see and fix, a false negative is a silently wrong backtest.
+**Design decision — functions analyzed per call site.** A function's
+body is analyzed at each call, with its parameters bound to the
+arguments' taints and signs. Assignments to module-level variables land
+on them, a never-called function changes nothing, and recursion is
+iterated to a fixpoint. A `when` action is analyzed at its declaration,
+and again at each backtest of its strategy, where it really runs, as a
+loop over the bars. Whatever it assigns then carries a "state left by a
+backtest" taint.
+
+**Design decision — unprovable means rejected.** For a safety property,
+"cannot prove safe" has to mean "reject". A false positive is a compile
+error the user can see and fix; a false negative is a silently wrong
+backtest.
+
+**Tested against an experiment (`allie/semantic/audit.py`).** The audit
+defines look-ahead dynamically: a decision at bar t that changes when
+the bars after t are removed. It re-runs the program once per cut. The
+engine reports what each backtest decided (signals, orders, closed
+trades) to observers, through `observe_backtests()` in
+`run_backtest`, the entry point all three backends share. A fuzz test
+generates honest and leaky programs and asserts that every program the
+analysis accepts passes the audit. That turns soundness from a claim
+into a tested property. `allie check --audit` runs the same experiment
+on a user's file.
+
+**Does not:** flag future data used outside a decision (post-hoc
+analysis is legitimate), see data pre-shifted outside the language, or
+resolve a function's module-level variables where it was declared
+rather than where it's called.
 
 ## IR lowering (`allie/ir/`)
 
@@ -153,12 +213,24 @@ LLVM lowering needed *zero* `for`-specific code. One subtlety: `for`'s
 — jump to the condition and the counter never advances. A golden
 snapshot pins this exact shape.
 
-**Design decision — flat list, no control-flow graph.** Simple, and
-sufficient for lowering to LLVM (which builds real basic blocks from the
-labels). The cost is that optimizer passes have to reason about
-reachability without a CFG, which is where both bugs in
-[`how-it-works.md`](how-it-works.md) §3.4 came from. A real CFG is the
-main v2 change here.
+**Design decision — stored flat, analyzed as a graph.** The IR is one
+instruction list — simple to emit, and sufficient for lowering to LLVM,
+which builds real basic blocks from the labels. Passes that need control
+flow build a graph on demand (`allie/ir/cfg.py`: basic blocks, edges, a
+worklist dataflow solver) instead of reasoning about text order, which
+is where the bugs in [`how-it-works.md`](how-it-works.md) §3.4 came from.
+
+**Invariants, checked.** `allie/ir/verify.py` checks that labels are
+unique and every jump target exists, that every register is written
+exactly once (except `Move` targets), and that on every path a register
+is written before it is read. The pass manager can run it after every
+pass and name the one that broke the IR; the tests do, for every
+program in the repo and every program the optimizer fuzzer generates.
+
+**Lowered IR has no unreachable code.** Statements after a `break` /
+`continue` / `return` are dropped at lowering, whether or not the
+optimizer runs. Implicit Int → Float widening is an explicit
+`UnaryOp("to_float")`, inserted where the type checker found it.
 
 **Does not:** support first-class function values. Functions are static
 and name-registered, so a function returned from another function and
@@ -167,10 +239,14 @@ cross-validation suite is scoped around it.
 
 ## Optimizer (`allie/optimizer/`)
 
-**Does:** constant folding, dead-code elimination, common subexpression
-elimination. Each is a pure `IRProgram -> IRProgram` function; the pass
-manager is a single on/off switch so benchmarks can measure the
-difference.
+**Does:** constant propagation and folding (through variables and
+across branches, resolving constant conditions), dead-code elimination
+(liveness: dead values, dead stores, unreachable blocks), and common
+subexpression elimination (local to each straight-line stretch). Each is
+a pure `IRProgram -> IRProgram` function. The pipeline is defined once
+(`DEFAULT_PASSES`); the pass manager has an on/off switch for the
+benchmarks, optional verification after each pass, and a per-pass
+report that `--debug-ir` prints.
 
 **Does not:** remove any `Call`, ever (DCE). It has no way to know
 whether a call is side-effecting without consulting purity, so it
@@ -179,11 +255,12 @@ defined once, in one module, so the two passes cannot disagree. A test
 asserts every registered builtin is classified pure or impure, so a new
 builtin can't silently default to "never optimized".
 
-**Does not:** do proper dataflow analysis. DCE's liveness asks "is this
-read anywhere in the program", not "read after this point" — strictly
-more conservative, but immune to the loop back-edge trap that a naive
-forward scan falls into. CSE invalidates its caches at every label, for
-the same reason from the other direction.
+**Does not:** assume anything about a user function's effect on
+variables. A call to anything but a known builtin may read or assign
+any module-level variable, so constant propagation forgets every
+variable after one, DCE treats it as reading them all, and CSE drops
+its variable cache. At a function's exit every variable counts as live.
+CSE invalidates all its caches at every label.
 
 **Does not:** remove a division or modulo whose divisor isn't a known
 non-zero constant, even when the result is unused. Raising is an
@@ -196,15 +273,35 @@ they run this pass.
 
 ### Tree-walking interpreter (`allie/runtime/interpreter/`)
 
-Runs straight off the AST, no IR. The default for `allie run`, and the
-reference implementation the other two are checked against.
+Runs off the AST, no IR. The default for `allie run`, and the reference
+implementation the other two are checked against.
+
+**Design decision — compile to closures, then run.** The AST is walked
+once, turning each node into a Python closure that does that node's
+work; running the program is calling closures. Dispatch is decided at
+compile time; arithmetic is specialized by the type the checker
+inferred (`+` on two Ints is an add and a range check, on two Floats a
+bare add); `break`/`continue`/`return` are return values rather than
+exceptions; and a block that declares nothing runs in its enclosing
+scope instead of allocating one per iteration. The first version
+re-inspected every node with an `isinstance` chain each time it ran:
+~4.9 µs per loop iteration against ~0.8 µs now
+(`benchmarks/results.md`). A node with no type annotation falls back to
+the generic, dynamically typed operator.
 
 ### IR interpreter (`allie/ir/interpreter.py`)
 
-Executes the flat instruction list directly. Operator logic is
+Translates each program once into one small closure per instruction,
+returning the index of the next; labels become indices, and a register
+written only by one `LoadConst` is filled before the program starts
+rather than reloaded on every loop iteration. Registers are list slots.
+~3.6 µs per loop iteration became ~0.9 µs. Scalar operator logic is
 deliberately **re-implemented** rather than imported from the
 tree-walker: sharing the helpers would let a bug common to both hide
-from cross-validation, defeating the point of having two.
+from cross-validation, defeating the point of having two. Operators on
+series are the exception: like stdlib functions, every backend calls
+one numpy implementation (`allie/runtime/elementwise.py`), since the
+arithmetic there is numpy's, not ours.
 
 ### LLVM + MCJIT (`allie/codegen/`)
 
@@ -216,9 +313,12 @@ Everything touching a `Series`, `Matrix`, or `String` crosses into
 Python as an opaque `i64` handle, and every stdlib call routes through
 `runtime_bridge`. Reimplementing vectorized rolling windows in LLVM IR
 to *maybe* match numpy is a large amount of work for a likely-zero gain
-— the benchmarks confirm quant workloads are already ~99% numpy time.
-The cost is real and bounded: a user-defined function taking a `Series`
-parameter is rejected with a clear error rather than compiled.
+— on the quant benchmarks the JIT's native run takes exactly as long as
+the interpreters' run: the time is in the library calls, not the code
+around them.
+A user-defined function can take and return a `Series` or `PriceSeries`
+— the handle is just an `i64` — and an operator with a series operand
+(`close - open`, `fast crosses_above slow`) is one `binop_bridge` call.
 
 **Does not:** let exceptions cross the JIT boundary. A Python exception
 raised inside a ctypes callback invoked from JIT code is swallowed by
@@ -234,13 +334,19 @@ explicit zero-check first — matching both interpreters' behavior.
 
 ## Cross-cutting
 
-**Errors.** `LexError` and `QSTypeError` carry line/column and format
-identically: `{Kind}: {message}. Line {L}, Column {C}`. `AllieRuntimeError`
-uses the same shape but usually has no location — most runtime errors are
-raised inside stdlib functions operating on data ("mean: series must not
-be empty"), where no source position exists. Threading spans through the
-runtime is v2 work. `tests/unit/test_error_formats.py` pins the shared
-format so it can't drift again.
+**Errors.** `LexError`, `QSTypeError` and `AllieRuntimeError` carry
+line/column and format identically: `{Kind}: {message}. Line {L}, Column
+{C}`, rendered with the source line and a caret. A runtime error is
+located at the innermost expression that failed, **on every backend**:
+the tree-walker attaches the AST node's span; lowering stamps the same
+span on each IR instruction that can fail (`IRInstr.span`, outside its
+`repr` so golden snapshots don't change), and the IR interpreter attaches
+it; the JIT puts it in the payload of a native guard (a zero divisor,
+overflow) and, after a failed call into Python, attaches it from the
+error-exit block — code that only runs on failure, so the happy path
+pays nothing. An error raised inside a stdlib function gets the span of
+the call. The differential fuzzer compares error text across backends,
+locations included. `tests/unit/test_error_formats.py` pins the format.
 
 **Generated docs.** `docs/keywords.md` and the keyword table in
 `docs/language-reference.md` are both generated from `KEYWORD_ALIASES`
@@ -300,18 +406,28 @@ instructions.
 ### Native vs. bridged dispatch
 
 Arithmetic/comparison on `Int`/`Float`/`Bool` compiles to direct LLVM
-instructions (`add`/`fadd`/`sdiv`/`srem`/`icmp_signed`/`fcmp_ordered`,
-including `%`). Anything else routes through the bridge, which calls the
+instructions (`fadd`/`fdiv`/`icmp_signed`/`fcmp_ordered`, Int `+ - *`
+through LLVM's overflow-checking intrinsics, `%` floored like Python's). Anything else routes through the bridge, which calls the
 *same* `_apply_binop`/`_apply_unary` the IR interpreter uses — so there
 is no third reimplementation of operator semantics to drift out of sync.
 
-A call to a user-defined function with a fully-scalar signature becomes a
-direct native LLVM `call` (this is also how recursion works). A
-user-defined function with a `Series`/`Matrix`/... parameter or return
-type raises `LLVMLoweringError` rather than attempting boxed
-function-boundary marshalling — a deliberate, documented scope limit,
-since every real program calls *stdlib* functions for non-scalar work,
-never a user-defined one.
+A call to a user-defined function becomes a direct native LLVM `call`
+(this is also how recursion works); a `Series` or other non-scalar
+argument or result crosses it as its boxed handle. Main-program
+variables that a function uses live in LLVM globals, each with an
+"assigned yet?" flag, so a function reading one before its `let` ran
+raises the interpreters' "undefined name" error.
+
+**Ending a run.** Native code can't raise, so failures set a module-level
+`__allie_error` byte (the bridge writes it from Python) that native code
+checks after every call, returning immediately; a call-depth counter
+turns runaway recursion into "recursion too deep" instead of a native
+stack overflow.
+
+**LLVM's optimizer.** The module runs through LLVM's standard `-O2`
+pipeline before code generation (`--no-optimize` skips it). Lowering's
+`alloca`s become SSA registers, and hot loops get 2–5× faster; it costs
+about 1–1.5 ms of code generation per program.
 
 ### Confirming the Phase 5.2 desugar (Phase 6.3's required self-check)
 
@@ -343,19 +459,30 @@ Both interpreters raise `AllieValueError` here, and now so does the JIT.
 
 ### CLI
 
-Two entry points share one pipeline (`allie.cli.run_pipeline`):
-
 ```
-python main.py <file> [--debug-tokens] [--debug-ast] [--debug-ir] [--no-optimize] [--backend ...]
-allie run <file> [--backend {tree,ir,llvm}] [--debug-tokens] [--debug-ast] [--debug-ir] [--no-optimize]
+allie run FILE|- [--backend tree|ir|llvm] [--verify] [--no-optimize] [--trace] [--time]
+                 [--debug-tokens] [--debug-ast] [--debug-ir]
+allie check FILE...
+allie repl
+allie --version
+python main.py FILE ...        # allie run --backend llvm
 ```
 
-`main.py` implements the Phase 6.4 interface and defaults to the
-LLVM/JIT backend. `allie run` is the pre-existing installed console
-script and keeps its tree-walking default so nothing already written
-against it breaks. `--debug-ir` prints the Allie IR and the final LLVM IR
-as two clearly labeled sections. All flags are independent and
-combinable.
+`main.py` implements the Phase 6.4 interface; it takes its options from
+the same definition as `allie run` (`add_run_arguments`), so the two
+can't drift. `check` runs every static pass and nothing else. `repl`
+checks each submission incrementally — the resolver, checker and
+look-ahead analysis keep their state — so errors point at the line just
+typed, and a submission that fails is forgotten. `--verify` compares
+output, exit code *and* the error that ended the run across all three
+backends. `--trace` prints each statement as it runs; `--time` prints
+front end, lowering, LLVM code generation and run separately. LLVM is
+imported only for the llvm backend.
+
+Exit codes: 0 success, 1 the program has an error, 2 usage (bad
+arguments, an unreadable file), 3 `--verify` disagreement, 70 an
+internal compiler error — reported as such, with
+`ALLIE_TRACEBACK=1` for the Python traceback, never a raw traceback.
 
 ## Phase 7 — Backtesting DSL
 
@@ -380,32 +507,80 @@ behavior, but it avoids parsing, resolving, and type-checking a clause
 body only to then ignore it — and it makes `buy()`/`sell()` real
 builtins rather than decorative ones.
 
-### Position and accounting model (v1)
+### Position and accounting model (revised after v1)
 
-Flat-or-long, all-in, no shorting or leverage. `buy()` while already
-long and `sell()` while flat are no-ops, not errors — a crossing firing
-twice before the opposite signal is normal. Equity marks to market every
-bar, not just on trade bars. **Risk-free rate is 0** for the Sharpe
-ratio, stated explicitly since "Sharpe" alone doesn't say which
-convention is in use. An entry still open at the final bar is marked to
-market but not counted as a trade — it has no realized result yet.
+v1 was flat-or-long and all-in, filled every order at the close of the
+bar whose close produced the signal, and charged nothing. Each of those
+made results look better than trading would, which is the one thing a
+backtest must not do, so the engine was revised:
+
+- **Fills at the next bar's open by default.** A signal computed from
+  bar i's close can't be traded at that close — by the time it's known,
+  the bar is over. `with fill: "close"` keeps v1's convention, visibly.
+  Every clause's actions run before anything fills, and the last order
+  of a bar is the one that fills, so `buy()` then `sell()` on one bar is
+  no trade rather than a round trip at one price.
+- **Costs on by default.** 5 bps of slippage per fill; commission
+  optional. docs/spec.md made costs first-class for exactly this reason
+  ("if it's opt-in, people forget it"), and v1 had none. The results
+  table prints the fill point and both costs.
+- **Positions are a target fraction of equity.** `target(f)` is the
+  primitive; `buy`/`sell`/`short`/`cover` are guarded targets, so a
+  repeated signal stays a no-op as in v1. A reversal is a close and an
+  open at one price, so every trade has a clean entry and exit.
+- **Stops** use each bar's open, high and low: a gap exits at the open,
+  and a bar reaching both levels is read as the stop.
+- **Accounting** is cash plus shares at the last usable close, so a NaN
+  close carries the mark forward rather than poisoning equity; an
+  account that reaches zero is closed out instead of going negative. A
+  trade's P&L is the change in equity from just before its entry to its
+  exit — cash earns nothing, so that's exactly the position's P&L after
+  costs.
+- **Metrics** gained total return, buy-and-hold, Sortino, exposure, win
+  rate, profit factor, average trade and costs; CAGR now counts
+  `bars - 1` periods. **Risk-free rate is 0** for Sharpe and Sortino,
+  stated since "Sharpe" alone doesn't say which convention is in use.
+
+On the 60-bar fixture the canonical crossover went from Sharpe −0.16 to
+−0.19 — costs, mostly: the fixture's opens equal the previous closes, so
+there the fill point changes nothing. `tests/unit/test_backtest_engine.py`
+checks every rule above against hand-computed numbers on prices that do
+gap.
+
+The options (`with slippage: 0.001, stop_loss: 0.05`) are lowered as
+one `__backtest_option(name, value)` call each before `__backtest_run`,
+which takes them: a single call carrying all of them wouldn't fit the
+LLVM bridge's fixed arity, and the IR needed no new instruction. The
+names, types and valid ranges are one table
+(`allie.quant.backtest_engine.OPTIONS`) that both the type checker and
+the engine read.
 
 ### `Series<Bool>` is a distinct runtime type
 
-`crosses_above`/`crosses_below` return `BoolSeriesValue`, not a
-float64 `SeriesValue` holding 1.0/0.0. `SeriesValue` enforces float64 by
+Comparisons and crossings on series, `and`/`or`/`!` on them, and a
+`[true, false]` literal produce a `BoolSeriesValue`, not a float64
+`SeriesValue` holding 1.0/0.0. `SeriesValue` enforces float64 by
 construction, so a boolean series stored there would either break that
 invariant or silently become numeric data that `mean`/`SMA` would
 happily — and meaninglessly — accept.
 
-### `when` does not accept arbitrary boolean expressions
+### `when` takes any `Series<Bool>` (revised after v1)
 
-Decided explicitly rather than left open. The committed grammar
-(`whenClause → "when" expression (crosses_above|crosses_below)
-expression ":" statement`) *requires* a crossing operator, so supporting
-a bare `Bool` would mean a real grammar/parser/lowering change — and an
-arbitrary `Bool` has no natural long/flat interpretation without extra
-syntax distinguishing entry from exit. Not in v1.
+v1's grammar required a crossing (`when a crosses_above b:`), on the
+grounds that an arbitrary condition has no natural long/flat reading.
+But entry and exit were never the condition's job: each clause has its
+own action, and `buy()` or `sell()` in it says which. So the revision
+made `crosses_above`/`crosses_below` comparison operators, gave series
+the arithmetic, comparison and boolean operators, and made a `when`
+condition any expression the type checker can prove is a
+`Series<Bool>`: `when fast crosses_above slow and rsi < 70.0: buy();`.
+A single `Bool` is still rejected, with a hint — it's one decision, not
+one per bar.
+
+`backtest` became an expression too, evaluating to a `BacktestResult`
+whose fields (`r.sharpe`, `r.returns`, ...) feed ordinary code, so a
+parameter sweep, a train/test split (its bounds are `Int` expressions
+now) and a multiple-comparisons correction are all written in Allie.
 
 ### Two jump-boundary bugs found by checking a cross-reference claim
 
@@ -439,11 +614,12 @@ it with closures over `run_ir_program`, and the JIT fills it with ctypes
 wrappers around compiled function addresses (obtainable only after
 `finalize_object()`). The engine just calls them.
 
-**One documented semantic difference**: the IR/LLVM paths evaluate
-clause operands at the *declaration* site, while the tree walker defers
-them to the `backtest` statement. For any program that computes its
-indicators before declaring the strategy — every realistic one, and
-every one in the test suite — both give identical results.
+Each clause's condition is evaluated where the strategy is declared, on
+every backend, and the backtest receives that `Series<Bool>`. (v1's
+tree walker deferred it to the `backtest` statement while the IR and
+LLVM paths didn't, so reassigning an indicator between the two gave
+different results; `tests/unit/test_strategy_dsl.py` now pins the
+shared behavior.)
 
 ## Phase 8 — Testing & benchmarking infrastructure
 
@@ -495,14 +671,18 @@ flattened them under `allie/`, so one source root covers the same code.
 
 ### Benchmarks
 
-See `benchmarks/README.md` for methodology and the honest reading of the
+See `benchmarks/README.md` for methodology and the reading of the
 numbers. Structurally: three workload families (quant, pure-CS, blended),
-each defined twice — Allie and hand-written Python — timed over N trials
-with the first discarded, compile and run measured separately, and the
-optimizer toggled on/off as the only difference between two columns.
+each defined twice — Allie and hand-written Python — and checked to
+compute the same answer before any timing counts; five implementations
+timed over interleaved trials, phase by phase; a scaling study that
+separates fixed cost from cost per iteration; and bootstrap confidence
+intervals on every ratio.
 
-The pure-CS workload is what makes the headline result visible: the JIT
-is ~142x faster than the tree-walking interpreter and ~12x faster than
-hand-written Python on loop-heavy code. On quant workloads Allie is
-*slower* than Python, because both bottom out in the same numpy/pandas
-calls — reported plainly rather than omitted.
+**Revised after v1.** The first harness timed with `tracemalloc` running,
+which slowed allocation-heavy Python several-fold, and counted LLVM's
+code generation as run time. Its headline — the JIT ~127× faster than
+the interpreter and ~11× faster than Python on a loop — was mostly those
+two errors. Measured properly, a JIT-compiled loop iteration is roughly
+75× faster than CPython's, but compilation costs more than the 50k-iteration
+workload takes to run, so its total time is ~3× CPython's.

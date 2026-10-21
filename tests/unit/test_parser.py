@@ -6,6 +6,7 @@ from __future__ import annotations
 from allie.ast.nodes import (
     ArrayLiteral,
     Assignment,
+    Backtest,
     BacktestStmt,
     Binary,
     Block,
@@ -220,9 +221,48 @@ def test_strategy_and_when_clauses() -> None:
     assert isinstance(stmt, StrategyDecl)
     assert stmt.name == "Cross"
     assert len(stmt.when_clauses) == 2
-    assert stmt.when_clauses[0].operator == "crosses_above"
-    assert stmt.when_clauses[1].operator == "crosses_below"
+    first, second = (clause.condition for clause in stmt.when_clauses)
+    assert isinstance(first, Binary) and first.operator == "crosses_above"
+    assert isinstance(second, Binary) and second.operator == "crosses_below"
     assert isinstance(stmt.when_clauses[0].body, ExprStmt)
+
+
+def test_a_when_condition_is_any_expression() -> None:
+    program = _parse(
+        """
+        strategy S {
+            when fast crosses_above slow and rsi < 70.0: buy();
+            when !(close > upper) or rsi crosses_below 30.0: sell();
+        }
+        """
+    )
+    stmt = program.statements[0]
+    assert isinstance(stmt, StrategyDecl)
+    first, second = (clause.condition for clause in stmt.when_clauses)
+    # `and` binds looser than a crossing, which binds like a comparison.
+    assert isinstance(first, Logical) and first.operator == "and"
+    assert isinstance(first.left, Binary) and first.left.operator == "crosses_above"
+    assert isinstance(first.right, Binary) and first.right.operator == "<"
+    assert isinstance(second, Logical) and second.operator == "or"
+    assert isinstance(second.left, Unary)
+
+
+def test_crossings_are_ordinary_operators_outside_strategies_too() -> None:
+    program = _parse("let up = fast crosses_above slow + 1.0;")
+    stmt = program.statements[0]
+    assert isinstance(stmt, LetStmt)
+    crossing = stmt.initializer
+    assert isinstance(crossing, Binary) and crossing.operator == "crosses_above"
+    assert isinstance(crossing.right, Binary) and crossing.right.operator == "+"
+
+
+def test_backtest_expression() -> None:
+    program = _parse("let r = backtest Cross on AAPL from 0 to 100;")
+    stmt = program.statements[0]
+    assert isinstance(stmt, LetStmt)
+    expr = stmt.initializer
+    assert isinstance(expr, Backtest)
+    assert (expr.strategy_name, expr.symbol) == ("Cross", "AAPL")
 
 
 def test_backtest_statement() -> None:
@@ -231,8 +271,16 @@ def test_backtest_statement() -> None:
     assert isinstance(stmt, BacktestStmt)
     assert stmt.strategy_name == "Cross"
     assert stmt.symbol == "AAPL"
-    assert stmt.start == 0
-    assert stmt.end == 100
+    assert isinstance(stmt.start, NumberLiteral) and stmt.start.value == 0
+    assert isinstance(stmt.end, NumberLiteral) and stmt.end.value == 100
+
+
+def test_backtest_bounds_are_int_expressions() -> None:
+    program = _parse("backtest Cross on AAPL from split to len(AAPL.close) - 1;")
+    stmt = program.statements[0]
+    assert isinstance(stmt, BacktestStmt)
+    assert isinstance(stmt.start, Identifier) and stmt.start.name == "split"
+    assert isinstance(stmt.end, Binary) and stmt.end.operator == "-"
 
 
 def test_array_literal() -> None:

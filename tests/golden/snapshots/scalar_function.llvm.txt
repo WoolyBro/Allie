@@ -7,28 +7,98 @@ define i64 @"factorial"(i64 %".1")
 entry:
   %"n_ptr" = alloca i64
   store i64 %".1", i64* %"n_ptr"
+  %".4" = load i64, i64* @"__allie_depth"
+  %".5" = add i64 %".4", 1
+  store i64 %".5", i64* @"__allie_depth"
+  %".7" = icmp sgt i64 %".5", 10000
+  br i1 %".7", label %"runtime_error", label %"guard_ok"
+runtime_error:
+  %".9" = call i64 @"raise_runtime_error_bridge"(i64 <handle>)
+  %".10" = load i64, i64* @"__allie_depth"
+  %".11" = sub i64 %".10", 1
+  store i64 %".11", i64* @"__allie_depth"
+  ret i64 0
+guard_ok:
   %"r0" = load i64, i64* %"n_ptr"
-  %".4" = icmp sle i64 %"r0", 1
-  br i1 %".4", label %"cont", label %"if_else_0"
+  %".14" = icmp sle i64 %"r0", 1
+  br i1 %".14", label %"cont", label %"if_else_0"
 if_else_0:
   %"r4" = load i64, i64* %"n_ptr"
   %"r5" = load i64, i64* %"n_ptr"
-  %".7" = sub i64 %"r5", 1
-  %".8" = call i64 @"factorial"(i64 %".7")
-  %".9" = mul i64 %"r4", %".8"
-  ret i64 %".9"
-if_end_1:
-  unreachable
+  %".20" = call {i64, i1} @"llvm.ssub.with.overflow.i64"(i64 %"r5", i64 1)
+  %".21" = extractvalue {i64, i1} %".20", 1
+  br i1 %".21", label %"runtime_error.1", label %"guard_ok.1"
 cont:
+  %".16" = load i64, i64* @"__allie_depth"
+  %".17" = sub i64 %".16", 1
+  store i64 %".17", i64* @"__allie_depth"
   ret i64 1
+runtime_error.1:
+  %".23" = call i64 @"raise_runtime_error_bridge"(i64 <handle>)
+  %".24" = load i64, i64* @"__allie_depth"
+  %".25" = sub i64 %".24", 1
+  store i64 %".25", i64* @"__allie_depth"
+  ret i64 0
+guard_ok.1:
+  %".28" = extractvalue {i64, i1} %".20", 0
+  %".29" = call i64 @"factorial"(i64 %".28")
+  %".30" = load i8, i8* @"__allie_error"
+  %".31" = icmp ne i8 %".30", 0
+  br i1 %".31", label %"error_exit", label %"no_error"
+error_exit:
+  %".33" = call i64 @"locate_error_bridge"(i64 <handle>)
+  %".34" = load i64, i64* @"__allie_depth"
+  %".35" = sub i64 %".34", 1
+  store i64 %".35", i64* @"__allie_depth"
+  ret i64 0
+no_error:
+  %".38" = call {i64, i1} @"llvm.smul.with.overflow.i64"(i64 %"r4", i64 %".29")
+  %".39" = extractvalue {i64, i1} %".38", 1
+  br i1 %".39", label %"runtime_error.2", label %"guard_ok.2"
+runtime_error.2:
+  %".41" = call i64 @"raise_runtime_error_bridge"(i64 <handle>)
+  %".42" = load i64, i64* @"__allie_depth"
+  %".43" = sub i64 %".42", 1
+  store i64 %".43", i64* @"__allie_depth"
+  ret i64 0
+guard_ok.2:
+  %".46" = extractvalue {i64, i1} %".38", 0
+  %".47" = load i64, i64* @"__allie_depth"
+  %".48" = sub i64 %".47", 1
+  store i64 %".48", i64* @"__allie_depth"
+  ret i64 %".46"
 }
+
+@"__allie_depth" = global i64 0
+declare i64 @"raise_runtime_error_bridge"(i64 %".1")
+
+declare {i64, i1} @"llvm.ssub.with.overflow.i64"(i64 %".1", i64 %".2")
+
+@"__allie_error" = global i8 0
+declare i64 @"locate_error_bridge"(i64 %".1")
+
+declare {i64, i1} @"llvm.smul.with.overflow.i64"(i64 %".1", i64 %".2")
 
 define void @"__allie_main"()
 {
 entry:
   %".2" = call i64 @"factorial"(i64 5)
-  %".3" = call i64 @"box_int"(i64 %".2")
-  %".4" = call i64 @"call_builtin_bridge"(i64 <handle>, i64 %".3", i64 0, i64 0, i64 0, i64 1)
+  %".3" = load i8, i8* @"__allie_error"
+  %".4" = icmp ne i8 %".3", 0
+  br i1 %".4", label %"error_exit", label %"no_error"
+error_exit:
+  %".6" = call i64 @"locate_error_bridge"(i64 <handle>)
+  ret void
+no_error:
+  %".8" = call i64 @"box_int"(i64 %".2")
+  %".9" = call i64 @"call_builtin_bridge"(i64 <handle>, i64 %".8", i64 0, i64 0, i64 0, i64 1)
+  %".10" = load i8, i8* @"__allie_error"
+  %".11" = icmp ne i8 %".10", 0
+  br i1 %".11", label %"error_exit.1", label %"no_error.1"
+error_exit.1:
+  %".13" = call i64 @"locate_error_bridge"(i64 <handle>)
+  ret void
+no_error.1:
   ret void
 }
 

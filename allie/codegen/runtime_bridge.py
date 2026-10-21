@@ -54,16 +54,17 @@ import functools
 from collections.abc import Callable
 from typing import Any, TypeVar
 
-import numpy as np
-
 from allie.ir.interpreter import _apply_binop, _apply_unary
 from allie.quant.backtest_engine import (
+    BacktestResult,
     add_strategy_clause,
     declare_strategy,
     run_registered_backtest,
+    set_backtest_option,
 )
-from allie.runtime.errors import AllieValueError
-from allie.runtime.values import PriceSeriesValue, SeriesValue
+from allie.runtime.elementwise import series_literal
+from allie.runtime.errors import AllieNameError, AllieRuntimeError, AllieValueError
+from allie.runtime.values import PriceSeriesValue
 from allie.stdlib.registry import BUILTINS
 
 _PRICE_SERIES_FIELDS = ("open", "high", "low", "close", "volume", "dates")
@@ -71,6 +72,10 @@ _PRICE_SERIES_FIELDS = ("open", "high", "low", "close", "volume", "dates")
 _BOXED: dict[int, Any] = {}
 
 _pending_exception: BaseException | None = None
+# Address of the JIT module's `__allie_error` byte, while one is running.
+# Set to 1 whenever an error is recorded, so native code -- which checks
+# it after every call -- stops at the next one instead of carrying on.
+_error_flag_address: int | None = None
 
 _F = TypeVar("_F", bound=Callable[..., Any])
 
@@ -83,6 +88,18 @@ def take_pending_exception() -> BaseException | None:
     return error
 
 
+def set_error_flag_address(address: int | None) -> None:
+    global _error_flag_address
+    _error_flag_address = address
+
+
+def _record(error: BaseException) -> None:
+    global _pending_exception
+    _pending_exception = error
+    if _error_flag_address is not None:
+        ctypes.c_uint8.from_address(_error_flag_address).value = 1
+
+
 def _guarded(sentinel: Any) -> Callable[[_F], _F]:
     def decorator(fn: _F) -> _F:
         @functools.wraps(fn)
@@ -93,7 +110,7 @@ def _guarded(sentinel: Any) -> Callable[[_F], _F]:
             try:
                 return fn(*args)
             except Exception as error:  # noqa: BLE001 -- see module docstring
-                _pending_exception = error
+                _record(error)
                 return sentinel
 
         return wrapper  # type: ignore[return-value]
@@ -178,11 +195,13 @@ def call_builtin_bridge(
         declare_strategy(args[0])
         return 0
     if name == "__strategy_clause":
-        add_strategy_clause(args[0], args[1], args[2])
+        add_strategy_clause(args[0], args[1])
+        return 0
+    if name == "__backtest_option":
+        set_backtest_option(args[0], args[1])
         return 0
     if name == "__backtest_run":
-        run_registered_backtest(args[0], args[1], args[2], args[3])
-        return 0
+        return box(run_registered_backtest(args[0], args[1], args[2], args[3]))
     if name not in BUILTINS:
         raise AllieValueError(f"cannot call undefined function '{name}'")
     _, fn = BUILTINS[name]
@@ -198,11 +217,10 @@ def make_series_bridge(elems_ptr: int, count: int) -> int:
     array on the JIT side), read back here via ctypes rather than passed
     as fixed positional arguments."""
     if count == 0:
-        return box(SeriesValue(np.array([], dtype=np.float64)))
+        return box(series_literal([]))
     array_type = ctypes.c_int64 * count
     handles = ctypes.cast(elems_ptr, ctypes.POINTER(array_type)).contents
-    values = [unbox(h) for h in handles]
-    return box(SeriesValue(np.array(values, dtype=np.float64)))
+    return box(series_literal([unbox(h) for h in handles]))
 
 
 @_guarded(0)
@@ -229,14 +247,40 @@ def member_get_bridge(obj_handle: int, field_handle: int) -> int:
     field = unbox(field_handle)
     if isinstance(obj, PriceSeriesValue) and field in _PRICE_SERIES_FIELDS:
         return box(getattr(obj, field))
+    if isinstance(obj, BacktestResult):
+        return box(obj.field(field))
     raise AllieValueError(f"cannot access field '{field}' on {type(obj).__name__}")
 
 
 @_guarded(0)
 def raise_runtime_error_bridge(message_handle: int) -> int:
-    """Bridge target for errors the native fast path itself must raise
-    -- currently just native division/modulo by zero (allie.codegen.
-    llvm_lowering checks the divisor and calls this instead of ever
-    executing a native `sdiv`/`fdiv` by zero, which is undefined
-    behavior in LLVM, not a controlled trap)."""
-    raise AllieValueError(unbox(message_handle))
+    """Bridge target for errors the native code itself detects: a zero
+    divisor (checked before the division, since native division by zero
+    is undefined behavior, not a controlled trap), Int overflow, a
+    module-level variable used before it was assigned, recursion past
+    the depth limit. The handle is a message (an AllieValueError) or a
+    `(class name, message)` pair, so each error is raised as the same
+    class the interpreters raise."""
+    payload = unbox(message_handle)
+    if isinstance(payload, tuple):
+        class_name, message, *span = payload
+        raise _ERROR_CLASSES[class_name](message, span[0] if span else None)
+    raise AllieValueError(payload)
+
+
+def locate_error_bridge(span_handle: int) -> int:
+    """Called by native code on its way out after a failed call: gives
+    the pending error the failing instruction's source span, unless an
+    inner instruction already gave it one. Not `_guarded` -- it must run
+    precisely when an error is pending."""
+    error = _pending_exception
+    if isinstance(error, AllieRuntimeError) and error.span is None:
+        error.span = unbox(span_handle)
+    return 0
+
+
+_ERROR_CLASSES: dict[str, type[AllieRuntimeError]] = {
+    "AllieNameError": AllieNameError,
+    "AllieRuntimeError": AllieRuntimeError,
+    "AllieValueError": AllieValueError,
+}

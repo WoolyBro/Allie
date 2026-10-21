@@ -5,11 +5,12 @@ A forward pass maintaining three caches, all keyed by *resolved*
 register names (register aliases from an earlier elimination are
 substituted in before any cache lookup, via `resolve()`):
 
-- `const_cache`: `(type, value) -> register` for `LoadConst` -- a second
+- `const_cache`: `(type, repr) -> register` for `LoadConst` -- a second
   `LoadConst` of the identical literal aliases the first. Keyed by
-  `(type(value), value)`, not just `value`, so `LoadConst(1)` (Int) and
-  `LoadConst(1.0)` (Float) don't collide just because `1 == 1.0` in
-  Python.
+  `(type(value), repr(value))`, not just `value`, so `LoadConst(1)`
+  (Int) and `LoadConst(1.0)` (Float) don't collide just because
+  `1 == 1.0` in Python -- and neither do `0.0` and `-0.0`, which are
+  equal (and hash equal) but print differently.
 - `var_reg_cache`: `variable name -> register currently holding its
   up-to-date value` -- updated on every fresh `LoadVar` *and* every
   `StoreVar`. This is what makes reassignment correctly invalidate CSE:
@@ -29,8 +30,7 @@ substituted in before any cache lookup, via `resolve()`):
   about what's pure).
 
 **A control-flow-join bug this found, not something the spec called
-out.** Every `Label` invalidates `var_reg_cache`/`expr_cache`/
-`call_cache` (not `const_cache` -- a literal's value is path-independent).
+out.** Every `Label` invalidates every cache, `const_cache` included.
 Without this, a naive linear scan happily "reused" a pre-loop `LoadVar`'s
 register for a read *inside* the loop body, because nothing in a single
 forward pass distinguishes "this is the same static instruction running
@@ -42,13 +42,29 @@ other's since-stale pre-loop constant. The same reasoning applies to an
 `if`/`else` join: the `end_label` is reached having executed only one
 branch, so a cache entry from either branch is not trustworthy there
 either. This is the CSE-side analogue of the loop-carried-liveness trap
-DCE's module docstring documents -- same root cause (a flat, CFG-less
-instruction list, per allie/ir/instructions.py), different pass.
+DCE's module docstring documents -- same root cause (reasoning about
+text order instead of control flow), different pass.
+
+`const_cache` used to survive labels on the theory that a literal's
+value is path-independent. The *value* is; the *register* holding it is
+not -- it is only written on the path through the instruction that
+defined it. `if flag { x = x + 7; } let y = x + 7;` aliased the second
+`7` to a register written only inside the `if`, so with `flag` false
+the IR interpreter crashed reading an unwritten register. The IR
+verifier (allie/ir/verify.py) caught it the first time it ran.
+
+Two more invalidations keep the caches honest:
+
+- A `Call` to anything that isn't a known builtin -- a user function, a
+  `when` body run by `__backtest_run` -- may assign a module-level
+  variable, so `var_reg_cache` is cleared after it.
+- A `Move` re-writes its destination register, so any cache entry
+  whose value lives in that register is dropped.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TypeVar
 
 from allie.ir.instructions import (
     BinOp,
@@ -64,13 +80,22 @@ from allie.ir.instructions import (
     Return,
     StoreVar,
     UnaryOp,
+    located,
 )
-from allie.optimizer.pure_functions import PURE_FUNCTIONS
+from allie.optimizer.pure_functions import PURE_FUNCTIONS, VARIABLE_SAFE_CALLS
+
+_K = TypeVar("_K")
+
+
+def _forget(cache: dict[_K, str], register: str) -> None:
+    """Drops every entry whose value lives in `register`."""
+    for key in [k for k, value in cache.items() if value == register]:
+        del cache[key]
 
 
 def run(program: IRProgram) -> IRProgram:
     reg_alias: dict[str, str] = {}
-    const_cache: dict[tuple[type, Any], str] = {}
+    const_cache: dict[tuple[type, str], str] = {}
     var_reg_cache: dict[str, str] = {}
     expr_cache: dict[tuple[str, str, str], str] = {}
     call_cache: dict[tuple[str, tuple[str, ...]], str] = {}
@@ -86,14 +111,11 @@ def run(program: IRProgram) -> IRProgram:
             # lands here on iteration 2+ with variables the loop body
             # already reassigned, and an if/else's end_label is reached
             # having run only ONE of the two branches. Either way, a
-            # var_reg_cache/expr_cache/call_cache entry established
-            # before this point can't be trusted after it -- this flat,
-            # CFG-less IR (allie/ir/instructions.py's module docstring)
-            # gives CSE no way to know structurally, so the safe, simple
-            # answer is to invalidate all three at every Label. const_cache
-            # is the one exception: a literal's value never changes
-            # regardless of which path was taken, so constants stay
-            # shared across a join safely.
+            # cache entry established before this point can't be trusted
+            # after it -- not even a constant's, whose register may only
+            # have been written on the other path (see the module
+            # docstring). So every cache is cleared at every Label.
+            const_cache.clear()
             var_reg_cache.clear()
             expr_cache.clear()
             call_cache.clear()
@@ -101,7 +123,7 @@ def run(program: IRProgram) -> IRProgram:
             continue
 
         if isinstance(instr, LoadConst):
-            const_key = (type(instr.value), instr.value)
+            const_key = (type(instr.value), repr(instr.value))
             if const_key in const_cache:
                 reg_alias[instr.dest] = const_cache[const_key]
                 continue
@@ -128,7 +150,7 @@ def run(program: IRProgram) -> IRProgram:
                 reg_alias[instr.dest] = expr_cache[expr_key]
                 continue
             expr_cache[expr_key] = instr.dest
-            kept.append(BinOp(dest=instr.dest, op=instr.op, left=left, right=right))
+            kept.append(located(BinOp(dest=instr.dest, op=instr.op, left=left, right=right), instr))
 
         elif isinstance(instr, Call) and instr.fn_name in PURE_FUNCTIONS:
             args = tuple(resolve(a) for a in instr.args)
@@ -138,32 +160,53 @@ def run(program: IRProgram) -> IRProgram:
                 continue
             if instr.dest is not None:
                 call_cache[call_key] = instr.dest
-            kept.append(Call(dest=instr.dest, fn_name=instr.fn_name, args=list(args)))
+            kept.append(
+                located(Call(dest=instr.dest, fn_name=instr.fn_name, args=list(args)), instr)
+            )
 
         elif isinstance(instr, UnaryOp):
-            kept.append(UnaryOp(dest=instr.dest, op=instr.op, operand=resolve(instr.operand)))
+            kept.append(
+                located(
+                    UnaryOp(dest=instr.dest, op=instr.op, operand=resolve(instr.operand)), instr
+                )
+            )
 
         elif isinstance(instr, Call):
             kept.append(
-                Call(dest=instr.dest, fn_name=instr.fn_name, args=[resolve(a) for a in instr.args])
+                located(
+                    Call(
+                        dest=instr.dest,
+                        fn_name=instr.fn_name,
+                        args=[resolve(a) for a in instr.args],
+                    ),
+                    instr,
+                )
             )
+            if instr.fn_name not in VARIABLE_SAFE_CALLS:
+                var_reg_cache.clear()
 
         elif isinstance(instr, MemberGet):
-            kept.append(MemberGet(dest=instr.dest, obj=resolve(instr.obj), field=instr.field))
+            kept.append(
+                located(
+                    MemberGet(dest=instr.dest, obj=resolve(instr.obj), field=instr.field), instr
+                )
+            )
 
         elif isinstance(instr, Move):
             kept.append(Move(dest=instr.dest, src=resolve(instr.src)))
+            _forget(const_cache, instr.dest)
+            _forget(var_reg_cache, instr.dest)
+            _forget(expr_cache, instr.dest)
+            _forget(call_cache, instr.dest)
 
         elif isinstance(instr, JumpIfFalse):
             kept.append(JumpIfFalse(cond=resolve(instr.cond), label=instr.label))
 
         elif isinstance(instr, Return):
-            kept.append(
-                Return(value=resolve(instr.value) if instr.value is not None else None)
-            )
+            kept.append(Return(value=resolve(instr.value) if instr.value is not None else None))
 
         else:
             # Label, Jump have no register operands to resolve.
             kept.append(instr)
 
-    return IRProgram(instructions=kept)
+    return IRProgram(instructions=kept, is_function=program.is_function)

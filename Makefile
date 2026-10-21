@@ -1,4 +1,4 @@
-.PHONY: help install test cov lint typecheck check bench bench-quick regen-fixtures regen-golden clean
+.PHONY: help install test cov lint typecheck check bench bench-quick bench-compare regen-fixtures regen-golden clean
 
 PY := uv run
 
@@ -9,8 +9,9 @@ help:
 	@echo "make lint            ruff"
 	@echo "make typecheck       mypy"
 	@echo "make check           lint + typecheck + cov (what CI runs)"
-	@echo "make bench           regenerate benchmarks/results.{md,csv} from a clean run"
-	@echo "make bench-quick     2-trial smoke run, prints to stdout, writes nothing"
+	@echo "make bench           regenerate benchmarks/results.{md,csv,json} from a clean run"
+	@echo "make bench-quick     3-trial smoke run, prints to stdout, writes nothing"
+	@echo "make bench-compare   new run vs the committed results.json (same machine only)"
 	@echo "make regen-fixtures  regenerate tests/integration/fixtures/*.expected"
 	@echo "make regen-golden    regenerate tests/golden/snapshots/*"
 
@@ -38,6 +39,13 @@ bench:
 
 bench-quick:
 	$(PY) python -m benchmarks.run --quick
+
+# Exits 1 if anything is slower than the committed run by more than 5%,
+# outside its confidence interval. Only meaningful on the machine that
+# produced benchmarks/results.json.
+bench-compare:
+	$(PY) python -m benchmarks.run --trials 10 --out benchmarks/results/latest \
+		--compare benchmarks/results.json
 
 # Both regenerate committed expected-output files. Read the resulting
 # diff before committing -- catching an unintended change is the entire

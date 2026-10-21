@@ -1,7 +1,7 @@
 [project]
 name = "allie"
 version = "0.1.0"
-description = "A gradually-typed DSL for quantitative trading research, with first-class backtesting semantics."
+description = "A statically typed DSL for quantitative trading research, with first-class backtesting semantics."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }

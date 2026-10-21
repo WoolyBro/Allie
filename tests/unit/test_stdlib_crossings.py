@@ -1,13 +1,27 @@
-"""Tests for crosses_above/crosses_below -- Phase 7.3."""
+"""The crosses_above/crosses_below operators' semantics, tested on the
+shared implementation every backend calls (allie/runtime/elementwise.py).
+Through source and across backends: test_strategy_dsl.py."""
 
 from __future__ import annotations
 
 import numpy as np
 import pytest
 
+from allie.runtime.elementwise import apply_binary
 from allie.runtime.errors import AllieValueError
 from allie.runtime.values import BoolSeriesValue, SeriesValue
-from allie.stdlib.series_ops import crosses_above, crosses_below
+
+
+def crosses_above(a: object, b: object) -> BoolSeriesValue:
+    result = apply_binary("crosses_above", a, b)
+    assert isinstance(result, BoolSeriesValue)
+    return result
+
+
+def crosses_below(a: object, b: object) -> BoolSeriesValue:
+    result = apply_binary("crosses_below", a, b)
+    assert isinstance(result, BoolSeriesValue)
+    return result
 
 
 def _series(*values: float) -> SeriesValue:
@@ -71,10 +85,23 @@ def test_crossings_are_mutually_exclusive_per_bar() -> None:
 
 
 def test_mismatched_lengths_raise() -> None:
-    with pytest.raises(AllieValueError):
+    message = "'crosses_above' needs series of the same length, got 3 and 2"
+    with pytest.raises(AllieValueError, match=message):
         crosses_above(_series(1.0, 2.0, 3.0), _series(1.0, 2.0))
     with pytest.raises(AllieValueError):
         crosses_below(_series(1.0, 2.0, 3.0), _series(1.0, 2.0))
+
+
+def test_a_number_is_a_level_to_cross() -> None:
+    rsi = _series(50.0, 35.0, 28.0, 25.0, 31.0, 40.0)
+    np.testing.assert_array_equal(
+        crosses_below(rsi, 30.0).data, [False, False, True, False, False, False]
+    )
+    np.testing.assert_array_equal(
+        crosses_above(rsi, 30.0).data, [False, False, False, False, True, False]
+    )
+    # A level on the left mirrors it: 30 crosses above rsi when rsi falls through it.
+    np.testing.assert_array_equal(crosses_above(30.0, rsi).data, crosses_below(rsi, 30.0).data)
 
 
 def test_nan_padding_from_sma_does_not_produce_spurious_crossings() -> None:
@@ -90,9 +117,10 @@ def test_nan_padding_from_sma_does_not_produce_spurious_crossings() -> None:
     assert not np.any(result.data[:3])  # slow's NaN warmup region
 
 
-def test_registered_in_builtins() -> None:
+def test_operators_not_builtins() -> None:
+    # The names are keywords, so a builtin of that name could never be called.
     import allie.stdlib as stdlib
 
     sigs = stdlib.builtin_function_types()
-    assert str(sigs["crosses_above"]) == "(Series<Float>, Series<Float>) -> Series<Bool>"
-    assert str(sigs["crosses_below"]) == "(Series<Float>, Series<Float>) -> Series<Bool>"
+    assert "crosses_above" not in sigs
+    assert "crosses_below" not in sigs

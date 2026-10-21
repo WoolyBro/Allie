@@ -1,34 +1,60 @@
-"""Tree-walking evaluator -- Phase 1 validated these semantics on
-hand-built tuples; Phase 4 needs real execution (ArrayLiteral producing
-a SeriesValue, FieldAccess reading a PriceSeriesValue, calling stdlib
-builtins), which requires walking the actual AST allie.parser.parser
-produces (allie.ast.nodes), not tuples. This module has been rewritten
-to dispatch on node *type* (isinstance checks against the dataclasses in
-allie.ast.nodes) instead of a tuple's first-element tag string.
+"""Tree-walking interpreter: runs a type-checked AST directly.
 
-Every evaluation rule below is unchanged from Phase 1 -- short-circuit
-and/or, break/continue/return via internal signal exceptions, closures
-capturing their defining Environment by reference, division/modulo by
-zero raising AllieValueError -- only the node shape changed. See
-tests/unit/test_interpreter.py, which re-proves each of these properties
-by running real .ql source text through the full lex -> parse -> eval
-pipeline (superseding tests/unit/test_phase1_eval.py's hand-built
-tuples, which can no longer run against this module's new contract).
+The reference backend -- what `allie run` uses by default, and what the
+IR interpreter and the LLVM JIT are cross-validated against
+(tests/unit/test_ir_cross_validation.py, test_llvm_cross_validation.py,
+the differential fuzzer).
 
-Each `allie run` invocation should construct a fresh Environment/
-Interpreter so runs are isolated (docs/spec.md "Concurrency model").
+## Compiled to closures, then run
+
+The AST is walked once, up front, turning every node into a Python
+closure that does that node's work: an `Identifier` becomes a function
+that looks one name up, `a + b` on two Ints a function that adds and
+range-checks. Running the program is then calling closures. Compared
+with re-inspecting each node with an `isinstance` chain every time it
+executes, this does the inspection once:
+
+- **Dispatch** is decided at compile time, per node.
+- **Arithmetic is specialized by type.** The type checker annotated
+  every expression (`inferred_type`), so `+` on two Ints compiles to an
+  add and a 64-bit range check, `+` on two Floats to a bare add, and a
+  series operator to the element-wise implementation -- no per-execution
+  type tests. A node without an annotation (an unchecked AST) falls back
+  to the generic, dynamically-typed operator.
+- **`break` / `continue` / `return` are return values**, not exceptions:
+  a statement's closure returns None to carry on, or a signal that
+  every enclosing block passes up until a loop or call consumes it.
+- **Scopes cost only where they're needed.** A block that declares
+  nothing (`{ total = total + i; }`) runs in its enclosing scope rather
+  than allocating a new one on every iteration; one with a `let` gets a
+  fresh scope each time it runs, as it must.
+
+Each `allie run` constructs a fresh Environment, so runs are isolated
+(docs/spec.md "Concurrency model").
+
+## Runtime errors know where they happened
+
+An AllieRuntimeError escaping a node is given that node's source span
+if it has none yet, so the innermost failing expression is the one
+reported: `AllieValueError: division by zero. Line 3, Column 11`. The IR
+interpreter and the JIT attach the same spans (allie.ir.instructions.
+IRInstr.span), so all three backends report a failure identically.
+
+## Tracing
+
+`run_program(..., trace=f)` calls `f(statement)` before each statement
+runs -- what `allie run --trace` prints.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
-
-import numpy as np
+from typing import Any, cast
 
 from allie.ast.nodes import (
     ArrayLiteral,
     Assignment,
+    Backtest,
     BacktestStmt,
     Binary,
     Block,
@@ -44,6 +70,7 @@ from allie.ast.nodes import (
     Identifier,
     IfStmt,
     ImportStmt,
+    Index,
     LetStmt,
     Logical,
     NumberLiteral,
@@ -53,12 +80,20 @@ from allie.ast.nodes import (
     StrategyDecl,
     StringLiteral,
     Unary,
-    WhenClause,
     WhileStmt,
+    Widen,
 )
-from allie.quant.backtest_engine import WhenSignal, run_backtest
+from allie.errors import SourceSpan
+from allie.quant.backtest_engine import (
+    BacktestResult,
+    WhenSignal,
+    config_from_options,
+    run_backtest,
+)
+from allie.runtime import elementwise
+from allie.runtime.elementwise import as_signal
 from allie.runtime.environment import Environment
-from allie.runtime.errors import AllieValueError
+from allie.runtime.errors import AllieNameError, AllieRuntimeError, AllieValueError
 from allie.runtime.values import (
     BoolSeriesValue,
     BuiltinFunction,
@@ -69,9 +104,583 @@ from allie.runtime.values import (
     Value,
     promote_numeric,
 )
-from allie.stdlib.series_ops import crosses_above, crosses_below
+from allie.stdlib.indexing import index_bool, index_float, index_int
+from allie.typechecker.types import BOOL, FLOAT, INT, STRING, SeriesType
 
-_COMPARISON_OPS: dict[str, Any] = {
+ExprCode = Callable[[Environment], Value]
+# A statement's closure returns None to continue, or a control signal.
+StmtCode = Callable[[Environment], object]
+Trace = Callable[[Stmt], None]
+
+
+class _Signal:
+    __slots__ = ("name",)
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+
+BREAK = _Signal("break")
+CONTINUE = _Signal("continue")
+
+
+class _Return:
+    """`return v`, on its way up to the call that consumes it."""
+
+    __slots__ = ("value",)
+
+    def __init__(self, value: Value) -> None:
+        self.value = value
+
+
+_INT_MIN = -(2**63)
+_INT_MAX = 2**63 - 1
+_PRICE_SERIES_FIELDS = ("open", "high", "low", "close", "volume", "dates")
+
+
+def run_program(program: Program, env: Environment, *, trace: Trace | None = None) -> None:
+    _Compiler(trace).statements(program.statements, scoped=False)(env)
+
+
+def evaluate(expression: Expr, env: Environment) -> Value:
+    """The value of one type-checked expression in `env` -- what the REPL
+    shows for an expression typed on its own."""
+    return _Compiler(None).expr(expression)(env)
+
+
+def _locate(error: AllieRuntimeError, span: SourceSpan) -> None:
+    """Gives `error` this span unless an inner node already gave it one."""
+    if error.span is None:
+        error.span = span
+
+
+def _overflow(span: SourceSpan) -> AllieValueError:
+    return AllieValueError("integer overflow: the result doesn't fit in a 64-bit Int", span)
+
+
+def _is_series(t: object) -> bool:
+    return isinstance(t, SeriesType)
+
+
+class _Compiler:
+    def __init__(self, trace: Trace | None) -> None:
+        self.trace = trace
+
+    # ---- statements ----
+
+    def statements(self, statements: list[Stmt], *, scoped: bool) -> StmtCode:
+        """A statement list. Functions are hoisted, matching the type
+        checker: every function declared directly in the list is bound
+        before any of them runs, so a call can precede its declaration
+        and two functions can call each other. `scoped` lists get their
+        own Environment -- but only if they declare something."""
+        hoisted = [s for s in statements if isinstance(s, FuncDecl)]
+        rest = [s for s in statements if not isinstance(s, FuncDecl)]
+        body = [self.stmt(s) for s in hoisted + rest]
+        declares = any(isinstance(s, (LetStmt, FuncDecl, StrategyDecl)) for s in statements)
+
+        if scoped and declares:
+
+            def run_scoped(env: Environment) -> object:
+                inner = Environment(env)
+                for code in body:
+                    signal = code(inner)
+                    if signal is not None:
+                        return signal
+                return None
+
+            return run_scoped
+
+        if len(body) == 1:
+            return body[0]
+
+        def run(env: Environment) -> object:
+            for code in body:
+                signal = code(env)
+                if signal is not None:
+                    return signal
+            return None
+
+        return run
+
+    def stmt(self, node: Stmt) -> StmtCode:
+        compile_stmt = self._STATEMENTS.get(type(node))
+        if compile_stmt is None:
+            raise AllieValueError(f"unknown statement node: {type(node).__name__}")
+        code = compile_stmt(self, node)
+        if self.trace is None or isinstance(node, Block):
+            return code
+        trace = self.trace
+
+        def traced(env: Environment) -> object:
+            trace(node)
+            return code(env)
+
+        return traced
+
+    def _let(self, node: LetStmt) -> StmtCode:
+        name, initializer = node.name, self.expr(node.initializer)
+
+        def run(env: Environment) -> None:
+            env.vars[name] = initializer(env)
+
+        return run
+
+    def _expr_stmt(self, node: ExprStmt) -> StmtCode:
+        expression = self.expr(node.expression)
+
+        def run(env: Environment) -> None:
+            expression(env)
+
+        return run
+
+    def _if(self, node: IfStmt) -> StmtCode:
+        condition, then = self.expr(node.condition), self.stmt(node.then_branch)
+        otherwise = self.stmt(node.else_branch) if node.else_branch is not None else None
+
+        def run(env: Environment) -> object:
+            if condition(env):
+                return then(env)
+            if otherwise is not None:
+                return otherwise(env)
+            return None
+
+        return run
+
+    def _while(self, node: WhileStmt) -> StmtCode:
+        condition, body = self.expr(node.condition), self.stmt(node.body)
+
+        def run(env: Environment) -> object:
+            while condition(env):
+                signal = body(env)
+                if signal is not None:
+                    if signal is BREAK:
+                        break
+                    if signal is not CONTINUE:
+                        return signal
+            return None
+
+        return run
+
+    def _for(self, node: ForStmt) -> StmtCode:
+        initializer = self.stmt(node.initializer)
+        condition, increment = self.expr(node.condition), self.expr(node.increment)
+        body = self.stmt(node.body)
+
+        def run(env: Environment) -> object:
+            loop_env = Environment(env)
+            initializer(loop_env)
+            while condition(loop_env):
+                signal = body(loop_env)
+                if signal is not None:
+                    if signal is BREAK:
+                        break
+                    if signal is not CONTINUE:
+                        return signal
+                increment(loop_env)
+            return None
+
+        return run
+
+    def _block(self, node: Block) -> StmtCode:
+        return self.statements(node.statements, scoped=True)
+
+    def _break(self, node: BreakStmt) -> StmtCode:
+        return lambda env: BREAK
+
+    def _continue(self, node: ContinueStmt) -> StmtCode:
+        return lambda env: CONTINUE
+
+    def _return(self, node: ReturnStmt) -> StmtCode:
+        if node.value is None:
+            return lambda env: _Return(None)
+        value = self.expr(node.value)
+        return lambda env: _Return(value(env))
+
+    def _func(self, node: FuncDecl) -> StmtCode:
+        name, params = node.name, [param.name for param in node.params]
+        # The body runs directly in the call's Environment, which already
+        # holds the parameters -- one scope per call, not two.
+        code = self.statements(node.body.statements, scoped=False)
+
+        def run(env: Environment) -> None:
+            env.vars[name] = Closure(params=params, body=node.body, defining_env=env, code=code)
+
+        return run
+
+    def _import(self, node: ImportStmt) -> StmtCode:
+        # No module system yet -- inert, as in the resolver and checker.
+        return lambda env: None
+
+    def _strategy(self, node: StrategyDecl) -> StmtCode:
+        name = node.name
+        conditions = [self.expr(clause.condition) for clause in node.when_clauses]
+        actions = [self.stmt(clause.body) for clause in node.when_clauses]
+
+        def run(env: Environment) -> None:
+            # Each condition is evaluated here, at the declaration -- the
+            # same point the IR and LLVM backends evaluate it.
+            clauses = [
+                (as_signal(condition(env)), action)
+                for condition, action in zip(conditions, actions, strict=True)
+            ]
+            env.vars[name] = StrategyValue(name=name, clauses=clauses, defining_env=env)
+
+        return run
+
+    def _backtest_stmt(self, node: BacktestStmt) -> StmtCode:
+        backtest = self._backtest(node)
+
+        def run(env: Environment) -> None:
+            print(cast(BacktestResult, backtest(env)).render())
+
+        return run
+
+    _STATEMENTS: dict[type, Callable[[Any, Any], StmtCode]] = {
+        LetStmt: _let,
+        ExprStmt: _expr_stmt,
+        IfStmt: _if,
+        WhileStmt: _while,
+        ForStmt: _for,
+        Block: _block,
+        BreakStmt: _break,
+        ContinueStmt: _continue,
+        ReturnStmt: _return,
+        FuncDecl: _func,
+        ImportStmt: _import,
+        StrategyDecl: _strategy,
+        BacktestStmt: _backtest_stmt,
+    }
+
+    # ---- expressions ----
+
+    def expr(self, node: Expr) -> ExprCode:
+        compile_expr = self._EXPRESSIONS.get(type(node))
+        if compile_expr is None:
+            raise AllieValueError(f"unknown expression node: {type(node).__name__}")
+        return compile_expr(self, node)
+
+    def _literal(self, node: NumberLiteral | StringLiteral | BoolLiteral) -> ExprCode:
+        value = node.value
+        return lambda env: value
+
+    def _identifier(self, node: Identifier) -> ExprCode:
+        name, span = node.name, node.span
+
+        def load(env: Environment) -> Value:
+            scope: Environment | None = env
+            while scope is not None:
+                variables = scope.vars
+                if name in variables:
+                    return variables[name]
+                scope = scope.parent
+            raise AllieNameError(f"undefined name: {name!r}", span)
+
+        return load
+
+    def _assignment(self, node: Assignment) -> ExprCode:
+        name, span, value_code = node.name, node.span, self.expr(node.value)
+
+        def assign(env: Environment) -> Value:
+            value = value_code(env)
+            scope: Environment | None = env
+            while scope is not None:
+                if name in scope.vars:
+                    scope.vars[name] = value
+                    return value
+                scope = scope.parent
+            raise AllieNameError(f"cannot assign to undefined name: {name!r}", span)
+
+        return assign
+
+    def _widen(self, node: Widen) -> ExprCode:
+        operand = self.expr(node.operand)
+        return lambda env: float(operand(env))  # type: ignore[arg-type]
+
+    def _unary(self, node: Unary) -> ExprCode:
+        operand, op, span = self.expr(node.operand), node.operator, node.span
+        operand_type = node.operand.inferred_type
+        if op == "!" and not _is_series(operand_type):
+            return lambda env: not operand(env)
+        if op == "-" and operand_type == FLOAT:
+            return lambda env: -operand(env)  # type: ignore[operator]
+        if op == "-" and operand_type == INT:
+
+            def negate_int(env: Environment) -> Value:
+                value = -operand(env)  # type: ignore[operator]
+                if value > _INT_MAX:  # only -(-2**63) overflows
+                    raise _overflow(span)
+                return value
+
+            return negate_int
+
+        def generic(env: Environment) -> Value:
+            value = operand(env)
+            try:
+                return _generic_unary(op, value, span)
+            except AllieRuntimeError as error:
+                _locate(error, span)
+                raise
+
+        return generic
+
+    def _logical(self, node: Logical) -> ExprCode:
+        left, right, op, span = (
+            self.expr(node.left),
+            self.expr(node.right),
+            node.operator,
+            node.span,
+        )
+        if _is_series(node.inferred_type):
+
+            def bar_by_bar(env: Environment) -> Value:
+                a, b = left(env), right(env)  # both sides, always
+                try:
+                    return elementwise.apply_binary(op, a, b)
+                except AllieRuntimeError as error:
+                    _locate(error, span)
+                    raise
+
+            return bar_by_bar
+        if op == "and":
+
+            def logical_and(env: Environment) -> Value:
+                value = left(env)
+                return right(env) if value else value
+
+            return logical_and
+
+        def logical_or(env: Environment) -> Value:
+            value = left(env)
+            return value if value else right(env)
+
+        return logical_or
+
+    def _binary(self, node: Binary) -> ExprCode:
+        left, right, op, span = (
+            self.expr(node.left),
+            self.expr(node.right),
+            node.operator,
+            node.span,
+        )
+        types = (node.left.inferred_type, node.right.inferred_type)
+        result_type = node.inferred_type
+
+        if _is_series(result_type) or any(_is_series(t) for t in types):
+
+            def series(env: Environment) -> Value:
+                a, b = left(env), right(env)
+                try:
+                    return elementwise.apply_binary(op, a, b)
+                except AllieRuntimeError as error:
+                    _locate(error, span)
+                    raise
+
+            return series
+
+        typed = None not in types and result_type is not None
+        if typed and op in _COMPARE:
+            compare = _COMPARE[op]
+            return lambda env: compare(left(env), right(env))
+        if typed and op in ("+", "-", "*") and result_type == INT:
+            arithmetic = _ARITHMETIC[op]
+
+            def int_arithmetic(env: Environment) -> Value:
+                value = arithmetic(left(env), right(env))
+                if _INT_MIN <= value <= _INT_MAX:
+                    return value
+                raise _overflow(span)
+
+            return int_arithmetic
+        if typed and op in ("+", "-", "*") and result_type == FLOAT:
+            arithmetic = _ARITHMETIC[op]
+            return lambda env: arithmetic(left(env), right(env))
+        if typed and op == "+" and result_type == STRING:
+            return lambda env: f"{left(env)}{right(env)}"
+        if typed and op == "/":
+
+            def divide(env: Environment) -> Value:
+                a, b = left(env), right(env)
+                if b == 0:
+                    raise AllieValueError("division by zero", span)
+                return float(a) / float(b)  # type: ignore[arg-type]
+
+            return divide
+        if typed and op == "%":
+
+            def modulo(env: Environment) -> Value:
+                a, b = left(env), right(env)
+                if b == 0:
+                    raise AllieValueError("modulo by zero", span)
+                # Floored: the result takes the divisor's sign (-7 % 2 is 1).
+                return a % b  # type: ignore[operator]
+
+            return modulo
+
+        def generic(env: Environment) -> Value:
+            a, b = left(env), right(env)
+            try:
+                return _generic_binary(op, a, b, span)
+            except AllieRuntimeError as error:
+                _locate(error, span)
+                raise
+
+        return generic
+
+    def _call(self, node: Call) -> ExprCode:
+        callee = self.expr(node.callee)
+        arguments = [self.expr(argument) for argument in node.arguments]
+        span = node.span
+
+        def call(env: Environment) -> Value:
+            function = callee(env)
+            args = [argument(env) for argument in arguments]
+            kind = type(function)
+            if kind is Closure:
+                closure = cast(Closure, function)
+                if len(args) != len(closure.params):
+                    raise AllieValueError(
+                        f"expected {len(closure.params)} argument(s), got {len(args)}", span
+                    )
+                call_env = Environment(closure.defining_env)
+                call_env.vars.update(zip(closure.params, args, strict=True))
+                code = closure.code or _Compiler(None).statements(
+                    closure.body.statements, scoped=False
+                )
+                signal = code(call_env)
+                return signal.value if isinstance(signal, _Return) else None
+            if kind is BuiltinFunction:
+                try:
+                    return cast(BuiltinFunction, function).fn(*args)
+                except AllieRuntimeError as error:
+                    _locate(error, span)
+                    raise
+            raise AllieValueError(f"cannot call non-function value: {function!r}", span)
+
+        return call
+
+    def _field(self, node: FieldAccess) -> ExprCode:
+        obj_code, name, span = self.expr(node.obj), node.name, node.span
+
+        def field(env: Environment) -> Value:
+            obj = obj_code(env)
+            if isinstance(obj, PriceSeriesValue) and name in _PRICE_SERIES_FIELDS:
+                return cast(Value, getattr(obj, name))
+            try:
+                if isinstance(obj, BacktestResult):
+                    return cast(Value, obj.field(name))
+                raise AllieValueError(f"cannot access field '{name}' on {type(obj).__name__}")
+            except AllieRuntimeError as error:
+                _locate(error, span)
+                raise
+
+        return field
+
+    def _index(self, node: Index) -> ExprCode:
+        """Same stdlib functions the IR and LLVM paths call, so bounds
+        checking and the element conversion can't differ between backends."""
+        series_code, index_code, span = self.expr(node.obj), self.expr(node.index), node.span
+        static = node.obj.inferred_type
+        by_type = (
+            index_int
+            if isinstance(static, SeriesType) and static.elem == INT
+            else index_bool
+            if isinstance(static, SeriesType) and static.elem == BOOL
+            else index_float
+        )
+
+        def index(env: Environment) -> Value:
+            series, i = series_code(env), index_code(env)
+            try:
+                if isinstance(i, bool) or not isinstance(i, int):
+                    raise AllieValueError(f"a series index must be an Int, got {i!r}")
+                if isinstance(series, BoolSeriesValue):
+                    return index_bool(series, i)
+                if not isinstance(series, SeriesValue):
+                    raise AllieValueError(f"cannot index a {type(series).__name__}")
+                return by_type(series, i)
+            except AllieRuntimeError as error:
+                _locate(error, span)
+                raise
+
+        return index
+
+    def _array(self, node: ArrayLiteral) -> ExprCode:
+        elements = [self.expr(element) for element in node.elements]
+        return lambda env: elementwise.series_literal([element(env) for element in elements])
+
+    def _backtest(self, node: BacktestStmt | Backtest) -> ExprCode:
+        """`backtest S on SYM from N to M` -- hands the strategy's signals
+        to the one engine entry point every backend calls
+        (allie.quant.backtest_engine.run_backtest)."""
+        strategy_name, symbol, span = node.strategy_name, node.symbol, node.span
+        start_code, end_code = self.expr(node.start), self.expr(node.end)
+        options = [(option.name, self.expr(option.value)) for option in node.options]
+
+        def backtest(env: Environment) -> Value:
+            try:
+                strategy = env.get(strategy_name)
+                if not isinstance(strategy, StrategyValue):
+                    raise AllieValueError(f"'{strategy_name}' is not a strategy")
+                # `on SYM` names an ordinary variable holding a PriceSeries.
+                prices = env.get(symbol)
+                if not isinstance(prices, PriceSeriesValue):
+                    raise AllieValueError(
+                        f"backtest: '{symbol}' must be a PriceSeries (from load(...)), "
+                        f"got {type(prices).__name__}"
+                    )
+                clauses = [
+                    WhenSignal(signal=signal, action=_when_action(action, strategy.defining_env))
+                    for signal, action in strategy.clauses
+                ]
+                # The bounds, then the options, in source order -- the order
+                # the compiled backends evaluate them in.
+                start, end = start_code(env), end_code(env)
+                config = config_from_options({name: code(env) for name, code in options})
+                return cast(
+                    Value,
+                    run_backtest(
+                        strategy_name=strategy_name,
+                        symbol=symbol,
+                        prices=prices,
+                        clauses=clauses,
+                        start=cast(int, start),
+                        end=cast(int, end),
+                        config=config,
+                    ),
+                )
+            except AllieRuntimeError as error:
+                _locate(error, span)
+                raise
+
+        return backtest
+
+    _EXPRESSIONS: dict[type, Callable[[Any, Any], ExprCode]] = {
+        NumberLiteral: _literal,
+        StringLiteral: _literal,
+        BoolLiteral: _literal,
+        Identifier: _identifier,
+        Assignment: _assignment,
+        Widen: _widen,
+        Unary: _unary,
+        Logical: _logical,
+        Binary: _binary,
+        Call: _call,
+        FieldAccess: _field,
+        Index: _index,
+        ArrayLiteral: _array,
+        Backtest: _backtest,
+    }
+
+
+def _when_action(action: StmtCode, env: Environment) -> Callable[[], None]:
+    def run() -> None:
+        action(Environment(env))
+
+    return run
+
+
+_COMPARE: dict[str, Callable[[Any, Any], bool]] = {
     "==": lambda a, b: a == b,
     "!=": lambda a, b: a != b,
     "<": lambda a, b: a < b,
@@ -79,289 +688,59 @@ _COMPARISON_OPS: dict[str, Any] = {
     "<=": lambda a, b: a <= b,
     ">=": lambda a, b: a >= b,
 }
-
-_PRICE_SERIES_FIELDS = ("open", "high", "low", "close", "volume", "dates")
-
-
-class BreakSignal(Exception):
-    """Internal control-flow signal for `break`. Never surfaces to the user."""
-
-
-class ContinueSignal(Exception):
-    """Internal control-flow signal for `continue`. Never surfaces to the user."""
+_ARITHMETIC: dict[str, Callable[[Any, Any], Any]] = {
+    "+": lambda a, b: a + b,
+    "-": lambda a, b: a - b,
+    "*": lambda a, b: a * b,
+}
 
 
-class ReturnSignal(Exception):
-    """Internal control-flow signal for `return`. Never surfaces to the user."""
-
-    def __init__(self, value: Value) -> None:
-        super().__init__()
-        self.value = value
+# ---- the dynamically-typed operators, for nodes without a type ----
 
 
-def truthy(value: Value) -> bool:
-    return bool(value)
+def _checked_int(value: Value, span: SourceSpan) -> Value:
+    if isinstance(value, int) and not isinstance(value, bool):
+        if not _INT_MIN <= value <= _INT_MAX:
+            raise _overflow(span)
+    return value
 
 
-def run_program(program: Program, env: Environment) -> None:
-    for stmt in program.statements:
-        exec_stmt(stmt, env)
-
-
-def eval_expr(node: Expr, env: Environment) -> Value:
-    if isinstance(node, (NumberLiteral, StringLiteral, BoolLiteral)):
-        return node.value
-
-    if isinstance(node, Identifier):
-        return env.get(node.name)
-
-    if isinstance(node, Assignment):
-        value = eval_expr(node.value, env)
-        env.assign(node.name, value)
-        return value
-
-    if isinstance(node, Unary):
-        return _eval_unary(node, env)
-
-    if isinstance(node, Logical):
-        left = eval_expr(node.left, env)
-        if node.operator == "and":
-            if not truthy(left):
-                return left
-            return eval_expr(node.right, env)
-        if node.operator == "or":
-            if truthy(left):
-                return left
-            return eval_expr(node.right, env)
-        raise AllieValueError(f"unknown logical operator: {node.operator!r}")
-
-    if isinstance(node, Binary):
-        return _eval_binary(node, env)
-
-    if isinstance(node, Call):
-        return _eval_call(node, env)
-
-    if isinstance(node, FieldAccess):
-        return _eval_field_access(node, env)
-
-    if isinstance(node, ArrayLiteral):
-        elements = [eval_expr(e, env) for e in node.elements]
-        return SeriesValue(np.array(elements, dtype=np.float64))
-
-    raise AllieValueError(f"unknown expression node: {type(node).__name__}")
-
-
-def _eval_unary(node: Unary, env: Environment) -> Value:
-    operand = eval_expr(node.operand, env)
-    if node.operator == "-":
+def _generic_unary(op: str, operand: Value, span: SourceSpan) -> Value:
+    if elementwise.is_series(operand):
+        return elementwise.apply_unary(op, operand)  # type: ignore[arg-type]
+    if op == "-":
         if isinstance(operand, bool) or not isinstance(operand, (int, float)):
             raise AllieValueError(f"unary '-' requires a number, got {operand!r}")
-        return -operand
-    if node.operator == "!":
-        return not truthy(operand)
-    raise AllieValueError(f"unknown unary operator: {node.operator!r}")
+        return _checked_int(-operand, span)
+    if op == "!":
+        return not operand
+    raise AllieValueError(f"unknown unary operator: {op!r}")
 
 
-def _eval_binary(node: Binary, env: Environment) -> Value:
-    left = eval_expr(node.left, env)
-    right = eval_expr(node.right, env)
-    op = node.operator
-
-    if op in _COMPARISON_OPS:
-        return bool(_COMPARISON_OPS[op](left, right))
-
+def _generic_binary(op: str, left: Value, right: Value, span: SourceSpan) -> Value:
+    if elementwise.is_series(left) or elementwise.is_series(right):
+        return elementwise.apply_binary(op, left, right)
+    if op in _COMPARE:
+        return bool(_COMPARE[op](left, right))
     if op == "+":
         if isinstance(left, str) or isinstance(right, str):
             return f"{left}{right}"
-        left, right = promote_numeric(left, right)
-        return left + right
-
+        a, b = promote_numeric(left, right)
+        return _checked_int(a + b, span)
     if op in ("-", "*"):
-        left, right = promote_numeric(left, right)
-        return (left - right) if op == "-" else (left * right)
-
+        a, b = promote_numeric(left, right)
+        return _checked_int((a - b) if op == "-" else (a * b), span)
     if op == "/":
-        left, right = promote_numeric(left, right)
-        if right == 0:
+        a, b = promote_numeric(left, right)
+        if b == 0:
             raise AllieValueError("division by zero")
-        return left / right
-
+        return float(a) / float(b)
     if op == "%":
-        left, right = promote_numeric(left, right)
-        if right == 0:
+        a, b = promote_numeric(left, right)
+        if b == 0:
             raise AllieValueError("modulo by zero")
-        return left % right
-
+        return a % b
     raise AllieValueError(f"unknown binary operator: {op!r}")
 
 
-def _eval_call(node: Call, env: Environment) -> Value:
-    callee = eval_expr(node.callee, env)
-    args = [eval_expr(arg, env) for arg in node.arguments]
-
-    if isinstance(callee, Closure):
-        if len(args) != len(callee.params):
-            raise AllieValueError(
-                f"expected {len(callee.params)} argument(s), got {len(args)}"
-            )
-        call_env = Environment(parent=callee.defining_env)
-        for name, value in zip(callee.params, args, strict=True):
-            call_env.define(name, value)
-        try:
-            exec_stmt(callee.body, call_env)
-        except ReturnSignal as ret:
-            return ret.value
-        return None
-
-    if isinstance(callee, BuiltinFunction):
-        return callee.fn(*args)
-
-    raise AllieValueError(f"cannot call non-function value: {callee!r}")
-
-
-def _eval_field_access(node: FieldAccess, env: Environment) -> Value:
-    obj = eval_expr(node.obj, env)
-    if isinstance(obj, PriceSeriesValue):
-        if node.name in _PRICE_SERIES_FIELDS:
-            return getattr(obj, node.name)
-        raise AllieValueError(f"PriceSeriesValue has no field '{node.name}'")
-    raise AllieValueError(f"cannot access field '{node.name}' on {type(obj).__name__}")
-
-
-def exec_stmt(node: Stmt, env: Environment) -> None:
-    if isinstance(node, LetStmt):
-        env.define(node.name, eval_expr(node.initializer, env))
-        return
-
-    if isinstance(node, ExprStmt):
-        eval_expr(node.expression, env)
-        return
-
-    if isinstance(node, IfStmt):
-        if truthy(eval_expr(node.condition, env)):
-            exec_stmt(node.then_branch, env)
-        elif node.else_branch is not None:
-            exec_stmt(node.else_branch, env)
-        return
-
-    if isinstance(node, WhileStmt):
-        while truthy(eval_expr(node.condition, env)):
-            try:
-                exec_stmt(node.body, env)
-            except BreakSignal:
-                break
-            except ContinueSignal:
-                continue
-        return
-
-    if isinstance(node, ForStmt):
-        _exec_for(node, env)
-        return
-
-    if isinstance(node, Block):
-        block_env = Environment(parent=env)
-        for stmt in node.statements:
-            exec_stmt(stmt, block_env)
-        return
-
-    if isinstance(node, BreakStmt):
-        raise BreakSignal()
-
-    if isinstance(node, ContinueStmt):
-        raise ContinueSignal()
-
-    if isinstance(node, ReturnStmt):
-        value = eval_expr(node.value, env) if node.value is not None else None
-        raise ReturnSignal(value)
-
-    if isinstance(node, FuncDecl):
-        params = [param.name for param in node.params]
-        env.define(node.name, Closure(params=params, body=node.body, defining_env=env))
-        return
-
-    if isinstance(node, ImportStmt):
-        # No module system exists yet -- inert, same treatment as the
-        # type checker's resolver/checker give it.
-        return
-
-    if isinstance(node, StrategyDecl):
-        # Declaration binds a value; the clause operands aren't evaluated
-        # until a `backtest` statement actually runs (see StrategyValue).
-        env.define(
-            node.name,
-            StrategyValue(name=node.name, clauses=node.when_clauses, defining_env=env),
-        )
-        return
-
-    if isinstance(node, BacktestStmt):
-        _exec_backtest(node, env)
-        return
-
-    raise AllieValueError(f"unknown statement node: {type(node).__name__}")
-
-
-def _exec_backtest(node: BacktestStmt, env: Environment) -> None:
-    """`backtest S on SYM from N to M;` -- resolves both names, computes
-    each `when` clause's signal series, and hands everything to the one
-    shared engine entry point (allie.quant.backtest_engine.run_backtest)
-    that every other backend also calls."""
-    strategy = env.get(node.strategy_name)
-    if not isinstance(strategy, StrategyValue):
-        raise AllieValueError(f"'{node.strategy_name}' is not a strategy")
-
-    # `on SYM` names an ordinary variable holding a PriceSeriesValue --
-    # e.g. `let AAPL = load("...")`. The grammar makes it an IDENTIFIER,
-    # so this is the natural reading and needs no new syntax.
-    prices = env.get(node.symbol)
-    if not isinstance(prices, PriceSeriesValue):
-        raise AllieValueError(
-            f"backtest: '{node.symbol}' must be a PriceSeries (from load(...)), "
-            f"got {type(prices).__name__}"
-        )
-
-    clauses = [
-        WhenSignal(
-            signal=_eval_when_signal(clause, strategy.defining_env),
-            action=_make_when_action(clause, strategy.defining_env),
-        )
-        for clause in strategy.clauses
-    ]
-
-    result = run_backtest(
-        strategy_name=node.strategy_name,
-        symbol=node.symbol,
-        prices=prices,
-        clauses=clauses,
-        start=int(node.start),
-        end=int(node.end),
-    )
-    print(result.render())
-
-
-def _eval_when_signal(clause: WhenClause, env: Environment) -> BoolSeriesValue:
-    left = eval_expr(clause.left, env)
-    right = eval_expr(clause.right, env)
-    if not isinstance(left, SeriesValue) or not isinstance(right, SeriesValue):
-        raise AllieValueError("'when' clause operands must be Series<Float>")
-    crossing = crosses_above if clause.operator == "crosses_above" else crosses_below
-    return crossing(left, right)
-
-
-def _make_when_action(clause: WhenClause, env: Environment) -> Callable[[], None]:
-    def action() -> None:
-        exec_stmt(clause.body, Environment(parent=env))
-
-    return action
-
-
-def _exec_for(node: ForStmt, env: Environment) -> None:
-    loop_env = Environment(parent=env)
-    exec_stmt(node.initializer, loop_env)
-    while truthy(eval_expr(node.condition, loop_env)):
-        try:
-            exec_stmt(node.body, loop_env)
-        except BreakSignal:
-            break
-        except ContinueSignal:
-            pass
-        eval_expr(node.increment, loop_env)
+__all__ = ["BREAK", "CONTINUE", "evaluate", "run_program"]

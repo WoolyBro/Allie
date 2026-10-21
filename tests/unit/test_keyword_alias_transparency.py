@@ -196,6 +196,7 @@ def test_every_alias_is_exercised_end_to_end() -> None:
         "on",
         "from",
         "to",
+        "with",
         "and",
         "or",
     }

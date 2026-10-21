@@ -270,14 +270,33 @@ def test_phase2_recursive_fibonacci_type_checks_cleanly() -> None:
     )
 
 
-def test_phase2_closure_style_nested_function_type_checks_cleanly() -> None:
+def test_nested_function_cannot_capture_enclosing_locals() -> None:
+    # Only the tree-walking interpreter has closures; the IR and LLVM
+    # backends call functions by name with no captured environment, so
+    # this used to type-check and then crash both of them.
+    with pytest.raises(
+        QSTypeError, match="'x' is a local variable of the enclosing function 'makeAdder'"
+    ):
+        _check(
+            """
+            func makeAdder(x: Int) -> Int {
+                func adder(n: Int) -> Int {
+                    return x + n;
+                }
+                return adder(5);
+            }
+            """
+        )
+
+
+def test_nested_function_taking_the_value_as_a_parameter_type_checks() -> None:
     _check(
         """
         func makeAdder(x: Int) -> Int {
-            func adder(n: Int) -> Int {
-                return x + n;
+            func adder(base: Int, n: Int) -> Int {
+                return base + n;
             }
-            return adder(5);
+            return adder(x, 5);
         }
         """
     )

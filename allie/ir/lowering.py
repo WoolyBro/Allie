@@ -71,6 +71,7 @@ from dataclasses import dataclass
 from allie.ast.nodes import (
     ArrayLiteral,
     Assignment,
+    Backtest,
     BacktestStmt,
     Binary,
     Block,
@@ -85,6 +86,7 @@ from allie.ast.nodes import (
     Identifier,
     IfStmt,
     ImportStmt,
+    Index,
     LetStmt,
     Logical,
     NumberLiteral,
@@ -96,9 +98,13 @@ from allie.ast.nodes import (
     Unary,
     WhenClause,
     WhileStmt,
+    Widen,
 )
 from allie.ast.nodes import Call as CallNode
+from allie.errors import SourceSpan
+from allie.ir.cfg import without_unreachable_code
 from allie.ir.instructions import (
+    GLOBAL_PREFIX,
     BinOp,
     Call,
     IRInstr,
@@ -115,13 +121,17 @@ from allie.ir.instructions import (
     StoreVar,
     UnaryOp,
 )
+from allie.ir.instructions import TO_FLOAT as TO_FLOAT
+from allie.stdlib.indexing import index_function_for
 from allie.typechecker.types import (
+    BACKTEST_RESULT,
     BOOL,
     FLOAT,
     INT,
     PRICE_SERIES,
     STRING,
     VOID,
+    SeriesType,
     Type,
     resolve_base_type,
     resolve_generic_type,
@@ -130,7 +140,12 @@ from allie.typechecker.types import (
 MAKE_SERIES_FN = "__make_series"
 STRATEGY_DECLARE_FN = "__strategy_declare"
 STRATEGY_CLAUSE_FN = "__strategy_clause"
+BACKTEST_OPTION_FN = "__backtest_option"
 BACKTEST_RUN_FN = "__backtest_run"
+
+
+# The instructions that can fail at run time, and so carry a source span.
+_FALLIBLE = (LoadVar, BinOp, UnaryOp, MemberGet, Call)
 
 
 @dataclass
@@ -157,8 +172,12 @@ class IRLowering:
         functions: dict[str, tuple[IRProgram, list[str]]] | None = None,
         registers: RegisterAllocator | None = None,
         function_info: dict[str, FunctionInfo] | None = None,
+        parent: IRLowering | None = None,
     ) -> None:
         self.instructions: list[IRInstr] = []
+        # The lowering of the enclosing code, for a function or `when`
+        # body -- how a module-level name used inside one is resolved.
+        self._parent = parent
         self.functions: dict[str, tuple[IRProgram, list[str]]] = (
             functions if functions is not None else {}
         )
@@ -172,6 +191,9 @@ class IRLowering:
         # shadowed variables (see _declare_var).
         self._scopes: list[dict[str, str]] = [{}]
         self._taken_names: set[str] = set()
+        # Source position of the expression or statement being lowered,
+        # stamped on the instructions that can fail (see IRInstr.span).
+        self._span: SourceSpan | None = None
 
     def lower_program(self, program: Program) -> IRProgram:
         for stmt in program.statements:
@@ -179,6 +201,8 @@ class IRLowering:
         return IRProgram(instructions=self.instructions)
 
     def _emit(self, instr: IRInstr) -> None:
+        if isinstance(instr, _FALLIBLE) and instr.span is None:
+            instr.span = self._span
         self.instructions.append(instr)
 
     # ---- variable scoping (alpha-renaming) ----
@@ -212,13 +236,31 @@ class IRLowering:
         self._scopes[-1][name] = ir_name
         return ir_name
 
-    def _resolve_var(self, name: str) -> str:
+    def _lookup(self, name: str) -> str | None:
         for scope in reversed(self._scopes):
             if name in scope:
                 return scope[name]
-        # Not declared in this lowering unit -- a module-level name seen
-        # from inside a function body, or a builtin. Pass it through.
-        return name
+        return None
+
+    def _resolve_var(self, name: str) -> str:
+        """The IR name for a variable reference.
+
+        Inside a function or `when` body, a name the body doesn't declare
+        is a module-level variable (the type checker rejects references
+        to an enclosing *function's* locals). It is written `@name`,
+        where `name` is the main program's IR name for the binding the
+        function sees at its definition -- so `@rate` means "the
+        module-level `rate`", distinct from any local `rate`, and every
+        pass and backend can tell the two apart."""
+        local = self._lookup(name)
+        if local is not None:
+            return local
+        if self._parent is None:
+            return name
+        root = self._parent
+        while root._parent is not None:
+            root = root._parent
+        return GLOBAL_PREFIX + (root._lookup(name) or name)
 
     def _resolve_type_annotation(self, annotation: object) -> Type:
         # Mirrors allie.typechecker.checker._resolve_type_annotation --
@@ -241,6 +283,13 @@ class IRLowering:
     # ---- statements ----
 
     def _lower_stmt(self, stmt: Stmt) -> None:
+        outer, self._span = self._span, stmt.span
+        try:
+            self._lower_stmt_impl(stmt)
+        finally:
+            self._span = outer
+
+    def _lower_stmt_impl(self, stmt: Stmt) -> None:
         if isinstance(stmt, LetStmt):
             # Initializer is lowered BEFORE declaring, so
             # `let x = x + 1;` still reads the outer `x`.
@@ -279,7 +328,9 @@ class IRLowering:
         elif isinstance(stmt, StrategyDecl):
             self._lower_strategy(stmt)
         elif isinstance(stmt, BacktestStmt):
-            self._lower_backtest(stmt)
+            # The statement form prints the results table.
+            result = self._lower_backtest(stmt)
+            self._emit(Call(dest=None, fn_name="print", args=[result]))
         else:
             raise LoweringError(f"unhandled statement node: {type(stmt).__name__}")
 
@@ -341,10 +392,13 @@ class IRLowering:
             functions=self.functions,
             registers=RegisterAllocator(),
             function_info=self.function_info,
+            parent=self,
         )
+        for param in stmt.params:
+            sub_lowering._declare_var(param.name)
         for s in stmt.body.statements:
             sub_lowering._lower_stmt(s)
-        body_program = IRProgram(instructions=sub_lowering.instructions)
+        body_program = IRProgram(instructions=sub_lowering.instructions, is_function=True)
         self.functions[stmt.name] = (body_program, [param.name for param in stmt.params])
 
         # Phase 3 requires explicit types on every function, so this
@@ -408,25 +462,28 @@ class IRLowering:
             functions=self.functions,
             registers=RegisterAllocator(),
             function_info=self.function_info,
+            parent=self,
         )
         sub_lowering._lower_stmt(clause.body)
-        self.functions[body_fn] = (IRProgram(instructions=sub_lowering.instructions), [])
+        self.functions[body_fn] = (
+            IRProgram(instructions=sub_lowering.instructions, is_function=True),
+            [],
+        )
         self.function_info[body_fn] = FunctionInfo(
             param_types=[],
             return_type=VOID,
             register_types=sub_lowering.register_types,
         )
 
-        # One packed spec constant rather than three separate arguments:
-        # the LLVM bridge takes a fixed 4 arguments, and (spec, left,
-        # right) fits where (strategy, operator, body_fn, left, right)
-        # would not.
-        spec_reg = self._const(f"{strategy_name}|{clause.operator}|{body_fn}")
-        left = self._lower_expr(clause.left)
-        right = self._lower_expr(clause.right)
-        self._emit(Call(dest=None, fn_name=STRATEGY_CLAUSE_FN, args=[spec_reg, left, right]))
+        # The condition is evaluated here, at the declaration, into one
+        # Series<Bool>; strategy and body names travel packed in one spec
+        # constant to fit the LLVM bridge's fixed arity.
+        spec_reg = self._const(f"{strategy_name}|{body_fn}")
+        condition = self._lower_expr(clause.condition)
+        self._emit(Call(dest=None, fn_name=STRATEGY_CLAUSE_FN, args=[spec_reg, condition]))
 
-    def _lower_backtest(self, stmt: BacktestStmt) -> None:
+    def _lower_backtest(self, stmt: BacktestStmt | Backtest) -> str:
+        """Runs the backtest; returns the register holding its result."""
         # `on SYM` names an ordinary variable holding a PriceSeries, so
         # it's loaded as a value rather than passed as a name -- the
         # LLVM bridge has no way to look a variable up by name.
@@ -434,15 +491,25 @@ class IRLowering:
         prices_reg = self.registers.new_reg()
         self._emit(LoadVar(dest=prices_reg, name=self._resolve_var(stmt.symbol)))
         self.register_types[prices_reg] = PRICE_SERIES
-        start_reg = self._const(stmt.start)
-        end_reg = self._const(stmt.end)
+        start_reg = self._lower_expr(stmt.start)
+        end_reg = self._lower_expr(stmt.end)
+        # One call per `with` option, each setting it for the run below --
+        # a single call carrying them all wouldn't fit the LLVM bridge's
+        # fixed arity.
+        for option in stmt.options:
+            name_reg = self._const(option.name)
+            value_reg = self._lower_expr(option.value)
+            self._emit(Call(dest=None, fn_name=BACKTEST_OPTION_FN, args=[name_reg, value_reg]))
+        result = self.registers.new_reg()
+        self.register_types[result] = BACKTEST_RESULT
         self._emit(
             Call(
-                dest=None,
+                dest=result,
                 fn_name=BACKTEST_RUN_FN,
                 args=[spec_reg, prices_reg, start_reg, end_reg],
             )
         )
+        return result
 
     def _const(self, value: object) -> str:
         """Emits a LoadConst into a fresh register, recording its type
@@ -462,7 +529,11 @@ class IRLowering:
     # ---- expressions (each returns the register holding its result) ----
 
     def _lower_expr(self, expr: Expr) -> str:
-        dest = self._lower_expr_impl(expr)
+        outer, self._span = self._span, expr.span
+        try:
+            dest = self._lower_expr_impl(expr)
+        finally:
+            self._span = outer
         # Phase 6 retrofit: record every register's static type from the
         # type checker's own annotation (see this module's docstring).
         # `inferred_type` is only None if type-checking never ran --
@@ -497,6 +568,13 @@ class IRLowering:
             dest = self.registers.new_reg()
             self._emit(UnaryOp(dest=dest, op=expr.operator, operand=operand))
             return dest
+        if isinstance(expr, Backtest):
+            return self._lower_backtest(expr)
+        if isinstance(expr, Widen):
+            operand = self._lower_expr(expr.operand)
+            dest = self.registers.new_reg()
+            self._emit(UnaryOp(dest=dest, op=TO_FLOAT, operand=operand))
+            return dest
         if isinstance(expr, Binary):
             left = self._lower_expr(expr.left)
             right = self._lower_expr(expr.right)
@@ -512,6 +590,15 @@ class IRLowering:
             dest = self.registers.new_reg()
             self._emit(MemberGet(dest=dest, obj=obj, field=expr.name))
             return dest
+        if isinstance(expr, Index):
+            # An ordinary builtin call, so the IR interpreter and the LLVM
+            # bridge need nothing index-specific (see allie.stdlib.indexing).
+            obj = self._lower_expr(expr.obj)
+            index = self._lower_expr(expr.index)
+            dest = self.registers.new_reg()
+            fn_name = index_function_for(expr.inferred_type)
+            self._emit(Call(dest=dest, fn_name=fn_name, args=[obj, index]))
+            return dest
         if isinstance(expr, ArrayLiteral):
             arg_regs = [self._lower_expr(element) for element in expr.elements]
             dest = self.registers.new_reg()
@@ -520,6 +607,14 @@ class IRLowering:
         raise LoweringError(f"unhandled expression node: {type(expr).__name__}")
 
     def _lower_logical(self, expr: Logical) -> str:
+        if isinstance(expr.inferred_type, SeriesType):
+            # Series `and`/`or` combine bar by bar -- both sides evaluated,
+            # nothing to short-circuit -- so it's an ordinary BinOp.
+            left = self._lower_expr(expr.left)
+            right = self._lower_expr(expr.right)
+            dest = self.registers.new_reg()
+            self._emit(BinOp(dest=dest, op=expr.operator, left=left, right=right))
+            return dest
         left = self._lower_expr(expr.left)
         result = self.registers.new_reg()
         self._emit(Move(dest=result, src=left))
@@ -566,7 +661,20 @@ def lower_program(
     """Convenience entry point: returns (main_program, functions,
     register_types, function_info). The last two are additive (Phase 6)
     -- callers that only need the first two (the IR interpreter, its
-    existing tests) can keep unpacking just those and ignore the rest."""
+    existing tests) can keep unpacking just those and ignore the rest.
+
+    Lowered IR never contains unreachable code -- the statements after a
+    `break`/`continue`/`return`, or after an `if` whose branches both
+    return. It is dropped here, whether or not the optimizer runs: the
+    LLVM backend creates a variable's stack slot at its first store, so a
+    loop written after a `break` (its counter's initializing store
+    skipped as unreachable, its header still reached by its own
+    back-edge) crashed codegen with an unoptimized build. The optimizer
+    fuzz test found it."""
     lowering = IRLowering()
-    main_program = lowering.lower_program(program)
-    return main_program, lowering.functions, lowering.register_types, lowering.function_info
+    main_program = without_unreachable_code(lowering.lower_program(program))
+    functions = {
+        name: (without_unreachable_code(body), params)
+        for name, (body, params) in lowering.functions.items()
+    }
+    return main_program, functions, lowering.register_types, lowering.function_info

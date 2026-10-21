@@ -4,7 +4,7 @@ Generated from `allie/lexer/keywords.py`'s `KEYWORD_ALIASES` -- do not hand-edit
 
 Lookup is case-sensitive: `Ahhh` (while) and `ahhh` are different tokens.
 
-Quant keywords (`strategy`, `when`, `crosses_above`, `crosses_below`, `backtest`, `on`, `from`, `to`) are canonical-only in v1 -- the mechanism supports slang aliases for them uniformly later without touching the lexer.
+Quant keywords (`strategy`, `when`, `crosses_above`, `crosses_below`, `backtest`, `on`, `from`, `to`, `with`) are canonical-only in v1 -- the mechanism supports slang aliases for them uniformly later without touching the lexer.
 
 | Token | Canonical | Also accepted |
 |---|---|---|
@@ -30,3 +30,4 @@ Quant keywords (`strategy`, `when`, `crosses_above`, `crosses_below`, `backtest`
 | `ON` | `on` | — |
 | `FROM` | `from` | — |
 | `TO` | `to` | — |
+| `WITH` | `with` | — |
