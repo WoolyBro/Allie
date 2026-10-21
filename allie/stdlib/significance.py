@@ -130,17 +130,13 @@ def sharpe(returns: SeriesValue, periods_per_year: int) -> float:
         )
     values = returns.data[np.isfinite(returns.data)]
     if len(values) < 2:
-        raise AllieValueError(
-            f"sharpe: need at least 2 finite observations, got {len(values)}"
-        )
+        raise AllieValueError(f"sharpe: need at least 2 finite observations, got {len(values)}")
     # Delegates to the backtest engine's definition rather than
     # reimplementing it, so the two cannot drift apart.
     return annualized_sharpe(values, periods_per_year)
 
 
-def permutation_pvalue(
-    signal: SeriesValue, returns: SeriesValue, trials: int, seed: int
-) -> float:
+def permutation_pvalue(signal: SeriesValue, returns: SeriesValue, trials: int, seed: int) -> float:
     """Two-sided permutation test for whether `signal` is associated
     with `returns` beyond chance.
 

@@ -122,9 +122,7 @@ def test_function_call_arity_mismatch_fails() -> None:
 
 def test_function_call_arg_type_mismatch_fails() -> None:
     with pytest.raises(QSTypeError):
-        _check(
-            'func add(a: Int, b: Int) -> Int { return a + b; } let x = add(1, "two");'
-        )
+        _check('func add(a: Int, b: Int) -> Int { return a + b; } let x = add(1, "two");')
 
 
 def test_function_call_correct_types_passes() -> None:
@@ -202,7 +200,7 @@ def test_return_on_every_path_passes() -> None:
 
 
 def test_void_function_does_not_need_a_return() -> None:
-    _check('func log(msg: String) -> Void { let x = msg; }')
+    _check("func log(msg: String) -> Void { let x = msg; }")
 
 
 # ---- regression net: every valid Phase-2 evaluator program still type-checks ----

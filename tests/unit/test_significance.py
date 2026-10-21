@@ -183,9 +183,9 @@ def test_permutation_pvalue_drops_nan_pairs() -> None:
     a, b = _rng_series(100, 8), _rng_series(100, 9)
     padded_a = np.concatenate([[np.nan] * 5, a])
     padded_b = np.concatenate([[np.nan] * 5, b])
-    assert permutation_pvalue(
-        SeriesValue(padded_a), SeriesValue(padded_b), 99, 7
-    ) == pytest.approx(permutation_pvalue(SeriesValue(a), SeriesValue(b), 99, 7))
+    assert permutation_pvalue(SeriesValue(padded_a), SeriesValue(padded_b), 99, 7) == pytest.approx(
+        permutation_pvalue(SeriesValue(a), SeriesValue(b), 99, 7)
+    )
 
 
 def test_permutation_pvalue_rejects_invalid_input() -> None:
@@ -201,9 +201,7 @@ def test_permutation_pvalue_rejects_invalid_input() -> None:
 
 def test_permutation_pvalue_needs_enough_overlap() -> None:
     with pytest.raises(AllieValueError):
-        permutation_pvalue(
-            SeriesValue([1.0, np.nan, np.nan]), SeriesValue([1.0, 2.0, 3.0]), 99, 7
-        )
+        permutation_pvalue(SeriesValue([1.0, np.nan, np.nan]), SeriesValue([1.0, 2.0, 3.0]), 99, 7)
 
 
 # ---- registration ----
@@ -215,6 +213,5 @@ def test_all_four_are_registered_builtins() -> None:
     assert str(signatures["benjamini_hochberg"]) == "(Series<Float>, Float) -> Series<Bool>"
     assert str(signatures["sharpe"]) == "(Series<Float>, Int) -> Float"
     assert (
-        str(signatures["permutation_pvalue"])
-        == "(Series<Float>, Series<Float>, Int, Int) -> Float"
+        str(signatures["permutation_pvalue"]) == "(Series<Float>, Series<Float>, Int, Int) -> Float"
     )

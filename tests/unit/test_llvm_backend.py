@@ -123,11 +123,7 @@ def test_a_variable_read_before_its_let_runs_fails_the_same_everywhere(
 ) -> None:
     # Hoisting lets `f` be called before `rate` is assigned. LLVM keeps a
     # "has been assigned" flag per shared variable rather than reading 0.
-    source = (
-        "print(f());\n"
-        "let rate: Float = 0.05;\n"
-        "func f() -> Float { return rate; }\n"
-    )
+    source = "print(f());\nlet rate: Float = 0.05;\nfunc f() -> Float { return rate; }\n"
     results = _run_everywhere(tmp_path, source, capsys)
     for backend, (code, out, err) in results.items():
         assert code == 1, backend
@@ -146,7 +142,7 @@ def test_functions_take_and_return_series_and_price_series(
         'let AAPL = load("tests/fixtures/AAPL_sample.csv");\n'
         "func last(p: PriceSeries) -> Float { return p.close[len(p.close) - 1]; }\n"
         "func fast(s: Series[Float]) -> Series[Float] { return SMA(s, 5); }\n"
-        "func label(x: Float) -> String { return \"close=\"; }\n"
+        'func label(x: Float) -> String { return "close="; }\n'
         "print(last(AAPL));\n"
         "print(mean(fast(AAPL.close)));\n"
         "print(label(1.0));\n"

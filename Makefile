@@ -1,4 +1,4 @@
-.PHONY: help install test cov lint typecheck check bench bench-quick bench-compare regen-fixtures regen-golden clean
+.PHONY: help install test cov lint format typecheck check bench bench-quick bench-compare regen-fixtures regen-golden clean
 
 PY := uv run
 
@@ -6,7 +6,8 @@ help:
 	@echo "make install         install project + dev dependencies (uv sync)"
 	@echo "make test            run the test suite"
 	@echo "make cov             run tests with coverage (enforces the floor in pyproject.toml)"
-	@echo "make lint            ruff"
+	@echo "make lint            ruff: lint rules, and formatting (checked, not changed)"
+	@echo "make format          ruff: fix what can be fixed, then format"
 	@echo "make typecheck       mypy"
 	@echo "make check           lint + typecheck + cov (what CI runs)"
 	@echo "make bench           regenerate benchmarks/results.{md,csv,json} from a clean run"
@@ -26,6 +27,11 @@ cov:
 
 lint:
 	$(PY) ruff check .
+	$(PY) ruff format --check .
+
+format:
+	$(PY) ruff check --fix .
+	$(PY) ruff format .
 
 typecheck:
 	$(PY) mypy .
@@ -57,5 +63,5 @@ regen-golden:
 	$(PY) python tests/golden/test_golden.py --regenerate
 
 clean:
-	rm -rf .pytest_cache .ruff_cache .mypy_cache .coverage htmlcov
-	find . -type d -name __pycache__ -prune -exec rm -rf {} +
+	rm -rf .pytest_cache .ruff_cache .mypy_cache .coverage htmlcov build dist *.egg-info
+	find . -path ./.venv -prune -o -path ./.git -prune -o -type d -name __pycache__ -prune -exec rm -rf {} +

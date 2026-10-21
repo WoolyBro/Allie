@@ -61,6 +61,7 @@ def verify(
     except CFGError as error:
         problems.append(str(error))
     else:
+
         def defined_after(block: BasicBlock, defined: frozenset[str]) -> frozenset[str]:
             return defined | {w for w in map(writes, block.instructions) if w is not None}
 

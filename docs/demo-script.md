@@ -92,7 +92,7 @@ Optional, if time: `allie run examples/rigor.qs`
 >
 > Everything runs on three independent backends — tree-walking
 > interpreter, IR interpreter, and the JIT — and they're cross-validated
-> against each other on every test. 1234 tests, 97% coverage."
+> against each other on every test. 1237 tests, 97% coverage."
 
 ---
 

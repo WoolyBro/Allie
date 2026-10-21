@@ -161,8 +161,10 @@ def _join(a: _State, b: _State) -> _State:
 def _overflows(value: Any) -> bool:
     """An Int result outside i64 is a runtime overflow error on every
     backend, so it must not be folded into a constant that holds it."""
-    return isinstance(value, int) and not isinstance(value, bool) and not (
-        _INT_MIN <= value <= _INT_MAX
+    return (
+        isinstance(value, int)
+        and not isinstance(value, bool)
+        and not (_INT_MIN <= value <= _INT_MAX)
     )
 
 

@@ -1,14 +1,24 @@
+# The hooks run the project's own tools, at the versions in uv.lock, so a
+# commit is checked by exactly what CI runs: one set of pins, not two to
+# drift apart. (Separate pins here had fallen to ruff 0.6 and mypy 1.11
+# against a lock on 0.16 and 2.3, and mypy ran without the project's
+# dependencies installed.)
 repos:
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.6.9
+  - repo: local
     hooks:
       - id: ruff
-        args: [--fix]
+        name: ruff check
+        entry: uv run ruff check --fix
+        language: system
+        types: [python]
       - id: ruff-format
-
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.11.2
-    hooks:
+        name: ruff format
+        entry: uv run ruff format
+        language: system
+        types: [python]
       - id: mypy
-        additional_dependencies: [numpy, pandas-stubs]
-        exclude: ^(tests/|benchmarks/|examples/)
+        name: mypy
+        entry: uv run mypy .
+        language: system
+        types: [python]
+        pass_filenames: false

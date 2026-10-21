@@ -112,8 +112,7 @@ _VALID_START = (
 _EXPLAINED_INVALID = frozenset("&|#") | frozenset(_WRONG_QUOTES)
 
 _NON_ASCII_HINT = (
-    "names, numbers and operators must be ASCII; "
-    "non-ASCII text is fine inside strings and comments"
+    "names, numbers and operators must be ASCII; non-ASCII text is fine inside strings and comments"
 )
 _ESCAPES_HINT = 'valid escapes are \\n \\t \\r \\" \\\\'
 

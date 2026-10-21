@@ -22,8 +22,7 @@ from allie.lexer.keywords import render_keywords_markdown, render_keywords_table
 
 _DOCS = Path(__file__).resolve().parent.parent / "docs"
 _BEGIN = (
-    "<!-- BEGIN GENERATED KEYWORDS -- do not hand-edit; "
-    "run scripts/generate_keywords_doc.py -->"
+    "<!-- BEGIN GENERATED KEYWORDS -- do not hand-edit; run scripts/generate_keywords_doc.py -->"
 )
 _END = "<!-- END GENERATED KEYWORDS -->"
 
@@ -43,9 +42,7 @@ def splice_reference_block(text: str) -> str:
         re.DOTALL,
     )
     if not pattern.search(text):
-        raise ValueError(
-            "docs/language-reference.md is missing the GENERATED KEYWORDS markers"
-        )
+        raise ValueError("docs/language-reference.md is missing the GENERATED KEYWORDS markers")
     return pattern.sub(lambda _: render_reference_block(), text)
 
 

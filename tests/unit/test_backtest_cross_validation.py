@@ -200,7 +200,7 @@ def test_an_order_from_a_function_called_outside_a_backtest_raises_at_runtime() 
 
 
 def test_a_user_function_named_like_an_order_is_just_a_function() -> None:
-    assert _run_tree('func target(x: Float) -> Void { print(x); }\ntarget(2.5);') == "2.5\n"
+    assert _run_tree("func target(x: Float) -> Void { print(x); }\ntarget(2.5);") == "2.5\n"
 
 
 def _resolver_errors(source: str) -> list[str]:
@@ -301,7 +301,4 @@ def test_backtest_symbol_must_be_a_price_series() -> None:
 
 def test_a_when_condition_must_be_a_series_of_bools() -> None:
     with pytest.raises(QSTypeError, match="must be a Series<Bool>"):
-        _run_tree(
-            "let slow: Series[Float] = [3.0, 3.0];\n"
-            "strategy S { when slow: buy(); }"
-        )
+        _run_tree("let slow: Series[Float] = [3.0, 3.0];\nstrategy S { when slow: buy(); }")

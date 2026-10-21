@@ -533,8 +533,8 @@ class Parser:
                 # Otherwise reported as an undefined variable, which hides the fix.
                 self._error_at(
                     value.span,
-                    f"the fill point is a string, not a name: fill: \"{value.name}\"",
-                    hint="'fill' is \"open\" (the next bar's open) or \"close\"",
+                    f'the fill point is a string, not a name: fill: "{value.name}"',
+                    hint='\'fill\' is "open" (the next bar\'s open) or "close"',
                 )
             options.append(BacktestOption(span=self._span(name), name=name.lexeme, value=value))
             if not self._match(TokenType.COMMA):
@@ -955,7 +955,5 @@ def _children(node: object) -> list[object]:
     children: list[object] = []
     for value in vars(node).values():
         items = value if isinstance(value, list) else [value]
-        children.extend(
-            item for item in items if isinstance(item, (Expr, Stmt, WhenClause))
-        )
+        children.extend(item for item in items if isinstance(item, (Expr, Stmt, WhenClause)))
     return children

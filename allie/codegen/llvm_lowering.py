@@ -748,9 +748,7 @@ class LLVMLowering:
                 return
             if instr.op == TO_FLOAT:
                 self.reg_values[instr.dest] = (
-                    self.builder.sitofp(operand_val, DOUBLE)
-                    if operand_type == INT
-                    else operand_val
+                    self.builder.sitofp(operand_val, DOUBLE) if operand_type == INT else operand_val
                 )
                 return
             raise LLVMLoweringError(f"unknown native unary operator: {instr.op!r}")
@@ -769,9 +767,7 @@ class LLVMLowering:
         # bridged, same generic call mechanism as everything else.
         obj_handle = self._read_reg(instr.obj)  # already boxed (PriceSeries is never scalar)
         field_handle = ir.Constant(I64, box(instr.field))
-        fn = self._declare_bridge(
-            "member_get_bridge", ir.FunctionType(I64, [I64, I64])
-        )
+        fn = self._declare_bridge("member_get_bridge", ir.FunctionType(I64, [I64, I64]))
         result_handle = self.builder.call(fn, [obj_handle, field_handle])
         self.reg_values[instr.dest] = self._unbox_value(
             result_handle, self.register_types.get(instr.dest)
@@ -800,13 +796,11 @@ class LLVMLowering:
             return
         if len(instr.args) > _MAX_BRIDGED_ARITY:
             raise LLVMLoweringError(
-                f"bridged call to '{instr.fn_name}' has more than "
-                f"{_MAX_BRIDGED_ARITY} arguments"
+                f"bridged call to '{instr.fn_name}' has more than {_MAX_BRIDGED_ARITY} arguments"
             )
         name_handle = ir.Constant(I64, box(instr.fn_name))
         arg_handles = [
-            self._box_value(self._read_reg(reg), self.register_types.get(reg))
-            for reg in instr.args
+            self._box_value(self._read_reg(reg), self.register_types.get(reg)) for reg in instr.args
         ]
         while len(arg_handles) < _MAX_BRIDGED_ARITY:
             arg_handles.append(ir.Constant(I64, 0))

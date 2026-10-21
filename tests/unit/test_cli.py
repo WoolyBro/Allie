@@ -35,9 +35,7 @@ def test_runs_on_every_backend(
     assert capsys.readouterr().out.strip().endswith("3")
 
 
-def test_missing_file_reports_cleanly(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_missing_file_reports_cleanly(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert run_pipeline(tmp_path / "nope.qs") == 2
     assert "no such file" in capsys.readouterr().err
 
@@ -95,9 +93,7 @@ def test_debug_ast(program: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert "=== AST ===" in capsys.readouterr().out
 
 
-def test_debug_ir_shows_both_ir_sections(
-    program: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_debug_ir_shows_both_ir_sections(program: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """--debug-ir must dump the custom IR *and* the LLVM IR, clearly
     labelled as two separate sections."""
     run_pipeline(program, backend="llvm", debug_ir=True)
@@ -118,10 +114,7 @@ def test_debug_ir_works_on_the_tree_backend_too(
 
 def test_flags_combine(program: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert (
-        run_pipeline(
-            program, backend="llvm", debug_tokens=True, debug_ast=True, debug_ir=True
-        )
-        == 0
+        run_pipeline(program, backend="llvm", debug_tokens=True, debug_ast=True, debug_ir=True) == 0
     )
     out = capsys.readouterr().out
     for section in ("=== TOKENS ===", "=== AST ===", "=== ALLIE IR ===", "=== LLVM IR ==="):
@@ -293,9 +286,7 @@ def test_an_error_inside_a_function_points_at_the_failing_expression(
         assert "Line 2, Column 13" in err, backend  # at s[i], not the call on line 4
 
 
-def test_verify_compares_the_errors_too(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_verify_compares_the_errors_too(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     path = _write(tmp_path, "print(1);\nlet z: Int = 0;\nprint(2 / z);\n")
     assert run_pipeline(path, verify=True) == 1
     captured = capsys.readouterr()

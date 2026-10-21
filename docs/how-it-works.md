@@ -496,3 +496,9 @@ loop written *inside* a `when` action is fine.
 **Assignment targets only bare names.** `s[i]` reads an element, but
 series are immutable values, so there is no `s[i] = x`, and fields are
 read-only.
+
+**No walk-forward analysis.** An out-of-sample test is two backtests
+over bar ranges (`from 0 to split`, `from split to len(c)`, as in
+`examples/risk.qs`). But nothing re-fits a strategy window by window,
+and a range can't be written as dates: `Date` and `DateRange` exist as
+type names, but nothing produces one.

@@ -96,7 +96,10 @@ rest.
 ```bash
 git clone <this-repo> && cd Lang
 make install          # uv sync --group dev
-make test             # 1234 tests
+make test             # 1237 tests
+make check            # what CI runs: lint, formatting, types, tests with coverage
+make format           # fix lint findings and formatting in place
+uv run pre-commit install   # the same lint, format and type checks on every commit
 ```
 
 ## Running programs

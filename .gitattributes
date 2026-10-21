@@ -1,0 +1,5 @@
+# LF everywhere: in the repository, and in every checkout, Windows
+# included. Git converts CRLF to LF when a file is staged, so a copy
+# edited on one OS never shows up as "modified" on another -- which used
+# to happen to dozens of files at once.
+* text=auto eol=lf

@@ -70,7 +70,5 @@ def builtin_function_types() -> dict[str, FunctionType]:
     lowering targets (e.g. the `__index_*` functions behind `s[i]`) and
     are left out, so source code can't call them by name."""
     return {
-        name: signature
-        for name, (signature, _) in BUILTINS.items()
-        if not name.startswith("__")
+        name: signature for name, (signature, _) in BUILTINS.items() if not name.startswith("__")
     }

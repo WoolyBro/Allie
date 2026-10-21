@@ -62,16 +62,12 @@ class _ProgramGenerator:
             lines += self.statement(module_scope, depth=3, in_loop=False, kinds=["let"])
         for _ in range(self.rng.randint(0, 2)):
             lines += self.function(module_scope)
-        lines += self.block(
-            module_scope, depth=0, count=self.rng.randint(3, 8), in_loop=False
-        )
+        lines += self.block(module_scope, depth=0, count=self.rng.randint(3, 8), in_loop=False)
         return "\n".join(lines) + "\n"
 
     def function(self, module_scope: list[tuple[str, str, bool]]) -> list[str]:
         name = self.fresh("f")
-        params = [
-            (self.fresh("p"), self.rng.choice(_TYPES)) for _ in range(self.rng.randint(0, 2))
-        ]
+        params = [(self.fresh("p"), self.rng.choice(_TYPES)) for _ in range(self.rng.randint(0, 2))]
         ret = self.rng.choice(_TYPES)
         scope = [*module_scope, *((p, t, True) for p, t in params)]
         body = self.block(scope, depth=1, count=self.rng.randint(0, 3), in_loop=False)
@@ -139,8 +135,7 @@ class _ProgramGenerator:
             inner = [*scope, (counter, "Int", False)]  # never reassigned: loops terminate
             body = self.block(inner, depth + 1, self.rng.randint(0, 3), in_loop=True)
             header = (
-                f"for let {counter}: Int = 0; {counter} < {bound}; "
-                f"{counter} = {counter} + 1 {{"
+                f"for let {counter}: Int = 0; {counter} < {bound}; {counter} = {counter} + 1 {{"
             )
             return [header, *_indent(body), "}"]
         jump = "break;" if kind == "break" else "continue;"

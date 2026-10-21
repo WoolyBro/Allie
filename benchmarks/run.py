@@ -454,9 +454,7 @@ def _headline(results: list[WorkloadResult], scaling: ScalingResult | None) -> l
                 "Every workload here is shorter than that."
             )
 
-    verdicts = [
-        (r.workload.name, r.ratio("jit_O0", "jit_O2")) for r in complete if r.has("jit_O0")
-    ]
+    verdicts = [(r.workload.name, r.ratio("jit_O0", "jit_O2")) for r in complete if r.has("jit_O0")]
     faster = [name for name, v in verdicts if v.significant and v.point > 1]
     slower = [name for name, v in verdicts if v.significant and v.point < 1]
     noise = [name for name, v in verdicts if not v.significant]

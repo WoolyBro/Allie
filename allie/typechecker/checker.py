@@ -501,7 +501,7 @@ class TypeChecker:
             self._error(
                 stmt.span,
                 f"backtest symbol '{stmt.symbol}' must be a PriceSeries, got {symbol_type}",
-                hint="load one with load(\"prices.csv\")",
+                hint='load one with load("prices.csv")',
             )
 
         self._check_backtest_options(stmt)

@@ -82,7 +82,7 @@ def test_missing_semicolon_on_the_same_line_names_what_was_found() -> None:
     [
         ("print(1 + );", "expected an expression, found ')'"),
         ("let x =", "expected an expression, found end of file"),
-        ('let x = 1 "two";', 'expected \';\' after the let statement, found string "two"'),
+        ('let x = 1 "two";', "expected ';' after the let statement, found string \"two\""),
         ("print(1];", "expected ')' to close the call opened at 1:6, found ']'"),
         ("let x: Series[Float = 1;", "expected ']' to close the type argument opened at 1:14"),
     ],
@@ -296,10 +296,7 @@ def test_a_when_clause_missing_its_colon_explains_what_a_condition_is() -> None:
 
 def test_recovery_skips_over_a_broken_clauses_action_block() -> None:
     source = (
-        "strategy S {\n"
-        "    when f crosses s: { buy(); }\n"
-        "    when f crosses_above s: sell();\n"
-        "}\n"
+        "strategy S {\n    when f crosses s: { buy(); }\n    when f crosses_above s: sell();\n}\n"
     )
     program, diagnostics = _parse(source)
     assert len(diagnostics) == 1
@@ -330,9 +327,7 @@ def test_error_right_before_a_closing_brace_keeps_the_block_intact() -> None:
 
 def test_trailing_commas_are_allowed() -> None:
     program = _clean(
-        "func f(a: Int, b: Int,) -> Int { return a; }\n"
-        "print(f(1, 2,));\n"
-        "let s = [1, 2, 3,];\n"
+        "func f(a: Int, b: Int,) -> Int { return a; }\nprint(f(1, 2,));\nlet s = [1, 2, 3,];\n"
     )
     func, call_stmt, let_stmt = program.statements
     assert isinstance(func, FuncDecl) and len(func.params) == 2

@@ -128,9 +128,7 @@ def test_dce_does_not_remove_for_loop_increment_store() -> None:
         ]
     )
     after = dce.run(before)
-    store_i_instrs = [
-        i for i in after.instructions if isinstance(i, StoreVar) and i.name == "i"
-    ]
+    store_i_instrs = [i for i in after.instructions if isinstance(i, StoreVar) and i.name == "i"]
     assert len(store_i_instrs) == 2  # the init AND the increment both survive
 
 
@@ -274,9 +272,7 @@ def test_cse_does_not_alias_across_a_loop_back_edge() -> None:
     # The two LoadVars right after the loop label must be genuinely
     # distinct reads -- not both aliased to the pre-loop r0.
     loads_at_top_of_body = [
-        i
-        for i in after.instructions
-        if isinstance(i, LoadVar) and i.name in ("total", "i")
+        i for i in after.instructions if isinstance(i, LoadVar) and i.name in ("total", "i")
     ]
     assert len(loads_at_top_of_body) >= 2
     total_load = next(i for i in loads_at_top_of_body if i.name == "total")
@@ -364,9 +360,7 @@ def test_dce_defines_no_local_notion_of_purity() -> None:
     from pathlib import Path
 
     source = Path("allie/optimizer/dce.py").read_text(encoding="utf-8")
-    code = "\n".join(
-        line for line in source.splitlines() if not line.strip().startswith("#")
-    )
+    code = "\n".join(line for line in source.splitlines() if not line.strip().startswith("#"))
     body = code.split('"""')[-1]  # drop the module docstring
     assert "PURE" not in body, "dce.py appears to define or use a local purity set"
 
