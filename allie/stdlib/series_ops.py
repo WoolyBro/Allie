@@ -184,6 +184,16 @@ def pct_change(series: SeriesValue) -> SeriesValue:
     return SeriesValue(result)
 
 
+def append(series: SeriesValue, value: float) -> SeriesValue:
+    """`series` with `value` added at the end, as a new series -- series
+    are immutable. How a loop collects one number per pass:
+
+        let sharpes: Series[Float] = [];
+        for ... { sharpes = append(sharpes, r.sharpe); }
+    """
+    return SeriesValue(np.append(series.data, float(value)))
+
+
 _SERIES_INT = (_SERIES_FLOAT, INT)
 register("SMA", FunctionType(params=_SERIES_INT, ret=_SERIES_FLOAT), SMA)
 register("EMA", FunctionType(params=_SERIES_INT, ret=_SERIES_FLOAT), EMA)
@@ -199,4 +209,5 @@ register(
 register("cumsum", FunctionType(params=(_SERIES_FLOAT,), ret=_SERIES_FLOAT), cumsum)
 register("shift", FunctionType(params=_SERIES_INT, ret=_SERIES_FLOAT), shift)
 register("diff", FunctionType(params=(_SERIES_FLOAT,), ret=_SERIES_FLOAT), diff)
+register("append", FunctionType(params=(_SERIES_FLOAT, FLOAT), ret=_SERIES_FLOAT), append)
 register("pct_change", FunctionType(params=(_SERIES_FLOAT,), ret=_SERIES_FLOAT), pct_change)

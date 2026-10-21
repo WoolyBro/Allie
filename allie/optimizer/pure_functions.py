@@ -82,13 +82,17 @@ PURE_FUNCTIONS: frozenset[str] = frozenset(
         "column",
         "covariance_matrix",
         "ols",
-        # Significance testing. permutation_pvalue is pure despite
-        # sampling: it takes an explicit seed, so the same arguments
-        # always give the same p-value (docs/spec.md "Determinism").
+        # Significance testing: every test is exact, with no sampling,
+        # so the same arguments always give the same answer.
         "bonferroni",
+        "holm",
         "benjamini_hochberg",
         "sharpe",
+        "probabilistic_sharpe",
+        "deflated_sharpe",
         "permutation_pvalue",
+        "backtest_pvalue",
+        "append",
         "len",
         # The `__index_*` functions behind `s[i]` raise on a bad index,
         # but identically on every call, so deduplicating two identical

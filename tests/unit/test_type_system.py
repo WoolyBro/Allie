@@ -448,3 +448,32 @@ def test_dates_field_runs_on_every_backend(
     # `.dates` used to be typed Void, which crashed LLVM codegen.
     assert _run(tmp_path, _LOAD + "let d = AAPL.dates;\nprint(1);\n", backend) == 0
     assert capsys.readouterr().out.strip() == "1"
+
+
+# ---- an empty series takes its type from the annotation ----
+
+
+def test_an_annotated_empty_series_is_how_a_loop_starts_collecting() -> None:
+    _clean("let found: Series[Float] = [];\nfound = append(found, 1.5);\nprint(len(found));")
+
+
+@pytest.mark.parametrize(
+    "source",
+    ["let found = [];", "let flags: Series[Bool] = [];", "let n: Float = [];"],
+    ids=["no-annotation", "bool-series", "not-a-series"],
+)
+def test_an_empty_literal_needs_a_numeric_series_annotation(source: str) -> None:
+    assert "cannot infer the type of an empty array literal" in str(_only(source))
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_an_empty_series_grows_on_every_backend(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], backend: str
+) -> None:
+    source = (
+        "let found: Series[Float] = [];\n"
+        "for let i: Int = 1; i <= 3; i = i + 1 { found = append(found, i * 1.5); }\n"
+        "print(found);\n"
+    )
+    assert _run(tmp_path, source, backend) == 0
+    assert capsys.readouterr().out == "Series[1.5, 3, 4.5]\n"

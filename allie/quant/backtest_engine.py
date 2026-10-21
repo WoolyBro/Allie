@@ -266,6 +266,7 @@ class BacktestResult:
     config: BacktestConfig = field(default_factory=BacktestConfig)
     period: tuple[str, str] | None = None
     ruined_at: int | None = None
+    closes: list[float] = field(default_factory=list)  # the window's, for backtest_pvalue
 
     # -- trade statistics --
 
@@ -547,6 +548,7 @@ class BacktestEngine:
             config=self.config,
             period=_period(p.dates, n),
             ruined_at=self.ruined_at,
+            closes=close,
         )
 
     def _fill_pending(self, price: float) -> None:

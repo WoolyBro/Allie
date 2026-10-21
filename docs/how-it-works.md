@@ -411,6 +411,41 @@ still updated the analysis's state, so `s = c; <something rejected>`
 made the analysis think `s` was clean when, at run time, it still held
 tomorrow's prices.
 
+### 3.6 A permutation test that shuffled the wrong way
+
+`permutation_pvalue` used to shuffle the signal's bars independently and
+count how often a shuffle correlated with the returns as well as the
+real signal did. That is a sound test when the bars of one series are
+independent of each other. Trading signals are not: a trend signal holds
+its value for weeks. Shuffling destroys that persistence, so the shuffled
+copies correlate with returns less than an unrelated persistent series
+would, and chance looks too unlikely. On two unrelated AR(1) series at
+φ = 0.9, it called the link significant at 5% in **48%** of trials
+(`tests/unit/test_rigor_calibration.py` keeps that baseline on record).
+
+The fix is to change the null, not the statistic. Every circular shift
+of the signal against the returns keeps both series exactly as they
+were, persistence and all, and breaks only their alignment. There are n
+of them, and the FFT computes the correlation at all n in O(n log n), so
+the test enumerates them all instead of sampling. It is exact, needs no
+seed, and rejects at 3–5%. The cost is honesty about sample size: the
+smallest p-value n bars can give is 1/n, and 300 bars at φ = 0.9 carry
+about as much information as 31 independent ones. `backtest_pvalue`
+applies the same idea to a finished backtest. It shifts the strategy's
+positions against the market's moves, which keeps how long the strategy
+holds each position and changes only *when*.
+
+The other half of the problem was the one `docs/spec.md` named: the best
+of N backtests. The rigor tools could correct p-values, but nothing
+judged the number people actually report, the Sharpe ratio. Picking the
+best of 20 zero-skill strategies passes a plain 95% Sharpe test 64% of
+the time. `deflated_sharpe` (Bailey & López de Prado) moves the
+benchmark to the Sharpe the best of N would reach by luck, and passes
+0.1% of the time. That is conservative, but it isn't blind: a true
+Sharpe of 3.5 over three years is still found 96% of the time. Both
+numbers are in the calibration tests, which run every rigor tool many
+times where the null is true and where it isn't.
+
 ---
 
 ## 4. Benchmarks

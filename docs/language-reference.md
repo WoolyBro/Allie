@@ -83,6 +83,7 @@ backend used to accept a program another crashed on or ran differently:
 | A `Void` result isn't a value (`let x = print(1);` is an error) | there is no value to store |
 | `==`/`!=` compare numbers (Int and Float mix), Bools or Strings — not series | series equality had no defined meaning |
 | A series literal holds numbers or Bools | that's all the runtime can store |
+| An empty literal needs a numeric series annotation: `let found: Series[Float] = [];` | `[]` alone says nothing about what it will hold |
 
 ### Errors
 
@@ -425,6 +426,7 @@ whose bars are all missing.
 | `cumsum(Series<Float>) -> Series<Float>` | ✓ | running total |
 | `shift(Series<Float>, Int) -> Series<Float>` | ✓ if ≥ 0 | positive shifts later; a negative shift is look-ahead |
 | `diff`, `pct_change` `(Series<Float>) -> Series<Float>` | ✓ | first difference, simple return; `NaN` at bar 0 |
+| `append(Series<Float>, Float) -> Series<Float>` | ✓ | a new series, one longer: how a loop collects a value per pass |
 
 ```allie
 let fast: Series[Float] = SMA(prices.close, 5);
@@ -498,31 +500,82 @@ point is computed.
 
 ### Significance testing
 
-Multiple-comparisons correction, so a window sweep can be reported
-honestly. `docs/spec.md` treats this as structural rather than optional:
-reporting the best Sharpe across N strategies without correcting for N
-is p-hacking by construction.
+Is a backtest's result real, or the best of many tries? `docs/spec.md`
+treats this as structural rather than optional: reporting the best Sharpe
+across N strategies without correcting for N is p-hacking by
+construction. Every test here is exact, with no sampling, so none takes
+a seed and each gives the same answer on every run and every backend.
 
 | Signature | T | |
 |---|---|---|
+| `backtest_pvalue(BacktestResult) -> Float` | | is the strategy's timing luck? (below) |
+| `permutation_pvalue(Series<Float>, Series<Float>) -> Float` | | `(signal, returns)`: is the association luck? |
+| `probabilistic_sharpe(Series<Float>, Float, Int) -> Float` | | `(returns, benchmark, periods_per_year)`: P(true Sharpe > benchmark) |
+| `deflated_sharpe(Series<Float>, Series<Float>, Int) -> Float` | | `(returns, trial_sharpes, periods_per_year)`: the same, for the best of several |
+| `holm(Series<Float>, Float) -> Series<Bool>` | | family-wise error control; True where rejected |
+| `benjamini_hochberg(Series<Float>, Float) -> Series<Bool>` | | false-discovery-rate control; True where rejected |
 | `bonferroni(Float, Int) -> Float` | ✓ | adjusted p-value, `min(1, p*n)` |
-| `benjamini_hochberg(Series<Float>, Float) -> Series<Bool>` | | FDR control; True where rejected |
-| `permutation_pvalue(Series<Float>, Series<Float>, Int, Int) -> Float` | | `(signal, returns, trials, seed)` |
+
+A sweep collects one Sharpe and one p-value per strategy, then judges
+them together ([`examples/rigor.qs`](../examples/rigor.qs)):
 
 ```allie
-let raw: Float = permutation_pvalue(signal, returns, 499, 20260825);
-print(bonferroni(raw, 5));   // corrected for having tried 5 windows
+let sharpes: Series[Float] = [];
+let pvalues: Series[Float] = [];
+for let w: Int = 4; w <= 20; w = w + 4 {
+    let trend: Series[Float] = SMA(c, w);
+    strategy Cross { when c crosses_above trend: buy(); when c crosses_below trend: sell(); }
+    let r = backtest Cross on AAPL from 0 to len(c);
+    sharpes = append(sharpes, r.sharpe);
+    pvalues = append(pvalues, backtest_pvalue(r));
+}
+print(holm(pvalues, 0.05));                          // which survive five tries
+print(deflated_sharpe(best_returns, sharpes, 252));  // is the winner's Sharpe real?
 ```
 
-`permutation_pvalue` shuffles the *signal*, not the returns — permuting
-returns leaves the Sharpe ratio unchanged (mean and std are
-order-invariant), which would make the test vacuous. Its p-value can
-never be exactly 0: the estimator is `(1 + hits) / (1 + trials)`, so
-`trials = 999` floors at 0.001 rather than claiming certainty no finite
-sample supports. The seed is explicit — no hidden global RNG
-(`docs/spec.md` "Determinism"). `benjamini_hochberg` is a *step-up*
-procedure: it rejects all of the k smallest p-values, not only those
-individually under the line.
+**Timing and association: every shift, not a shuffle.**
+`backtest_pvalue(r)` asks how often the strategy's own positions,
+shifted to every other point in time, would have earned at least as much
+from the market's close-to-close moves, before costs. `permutation_pvalue`
+asks the same of a signal's correlation with returns. A circular shift
+keeps each series exactly as it is (its trends, its persistence, how long
+a position is held) and breaks only the alignment. Shuffling bars one by
+one instead destroys that persistence and makes chance look too
+unlikely. On two unrelated series as persistent as a trend signal
+(AR(1), φ = 0.9), a shuffle test calls the link significant at 5% in 48%
+of trials; the shift test does so in 3%. With n bars the smallest
+p-value is 1/n: that is all n bars can show. Test returns and spreads,
+not price levels, since a trending series looks unlike its own shifted
+copies whatever it is compared with. Buy-and-hold has no timing to test
+and scores 1.
+
+**Sharpe ratios are estimates.** `probabilistic_sharpe` (Bailey & López
+de Prado) is the probability that the true Sharpe exceeds a benchmark,
+given the number of bars and how skewed and fat-tailed the returns are.
+`probabilistic_sharpe(r.returns, 0.0, 252) > 0.95` is "this strategy
+makes money" at 95% confidence, stated properly. `deflated_sharpe` asks
+the same of the *best* of several strategies. It sets the benchmark to
+the Sharpe the best of that many zero-skill strategies would reach by
+luck, from how many there were and how widely their Sharpes spread.
+`trial_sharpes` holds every strategy tried, the winner included. Similar
+trials (adjacent windows) spread less and cost less. It is conservative:
+the best of 20 zero-skill strategies passes 0.95 about 0.1% of the time,
+where `probabilistic_sharpe` alone passes it 64% of the time. A true
+Sharpe of 3.5 over three years, among 19 without, is still found 96% of
+the time.
+
+**Several results at once.** `holm` and `bonferroni` bound the chance of
+even one false positive, and `holm` rejects everything `bonferroni` would,
+often more. `benjamini_hochberg` bounds the share of false ones among the
+rejections, which is more lenient when many results are real. Both
+series forms return a `Series<Bool>` aligned with the input.
+`benjamini_hochberg` is a *step-up* procedure: it rejects all of the k
+smallest p-values, not only those individually under the line.
+
+Every one of these is a statistic of whole series or a whole backtest,
+so none can drive a trade: `when backtest_pvalue(r) < 0.05` is a
+look-ahead error. Whether each test holds its error rate is checked by
+simulation in `tests/unit/test_rigor_calibration.py`.
 
 ### Matrices
 
@@ -640,7 +693,7 @@ Future data enters at these sources:
 | a whole-series builtin | `mean(c)`, `zscore(c)`, `percentile(c, 90.0)` | its value at any bar reflects the later ones (the unmarked rows in the [Standard library](#standard-library) tables) |
 | the number of bars | `len(c)` | it counts the bars still to come |
 | a single bar | `c[59]`, `c[len(c) - 1]` | it's the future for every bar before it (`c[0]` is fine) |
-| a backtest's statistics | `r.sharpe`, `r.trades` | they cover the whole backtest (`r.equity`, `r.returns`, `r.drawdown`, `r.position` are per bar, and fine) |
+| a backtest's statistics | `r.sharpe`, `r.trades`, `backtest_pvalue(r)` | they cover the whole backtest (`r.equity`, `r.returns`, `r.drawdown`, `r.position` are per bar, and fine) |
 | state a backtest's actions left | `n` after `when ...: { n = n + 1.0; }` ran | it holds what they did on every bar |
 | a hand-built series | `[c[1], c[0]]` | which bar each element came from can't be checked |
 
@@ -725,6 +778,13 @@ What it can't see:
 - the scope a function or a `when` action is declared in. Its
   module-level variables are resolved where it is called or backtested,
   so a local there with the same name would be read instead.
+
+Where it is stricter than it needs to be: choosing a strategy by a
+backtest's results, such as the window with the best `r.sharpe`, and then
+trading it is rejected even when the choice used only earlier bars, as
+in a train/test split. Bar ranges are run-time values, so the analysis
+can't tell which bars a statistic covered. Report the in-sample winner
+through `deflated_sharpe` instead, which corrects for having picked it.
 
 ## Known limitations
 

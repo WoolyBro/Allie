@@ -57,6 +57,23 @@ def test_example_runs_clean(path: Path, capsys: pytest.CaptureFixture[str]) -> N
     assert captured.out.strip(), f"{path.name} produced no output"
 
 
+@pytest.mark.parametrize("path", _runnable_example_paths(), ids=lambda p: p.stem)
+def test_example_agrees_on_every_backend(path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """What each example's header promises: `--verify` runs it on the
+    tree interpreter, the IR interpreter and the LLVM JIT, and reports a
+    result only if all three agree."""
+    previous = Path.cwd()
+    os.chdir(_REPO_ROOT)
+    try:
+        exit_code = run_pipeline(path, verify=True)
+    finally:
+        os.chdir(previous)
+
+    captured = capsys.readouterr()
+    assert exit_code == 0, f"{path.name} exited {exit_code}\n{captured.err}"
+    assert "[verified: tree, ir, llvm agree]" in captured.err
+
+
 def test_no_stale_ql_examples_remain() -> None:
     """The project settled on `.qs`. A leftover `.ql` file would be
     skipped by the glob above and could rot unnoticed -- exactly how

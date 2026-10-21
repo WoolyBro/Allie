@@ -641,3 +641,13 @@ def test_a_second_backtest_starts_from_the_first_ones_state() -> None:
 
 def test_state_read_bar_by_bar_or_reset_is_accepted() -> None:
     assert _violations(_COUNTING + "n = 0.0;\nbacktest A on AAPL from 0 to 60;") == []
+
+
+def test_a_backtests_significance_is_the_future_too() -> None:
+    body = (
+        _A_BACKTEST + "let r = backtest A on AAPL from 0 to 60;\n"
+        "strategy S { when AAPL.close > slow and backtest_pvalue(r) < 0.05: buy(); }"
+    )
+    found = _violations(body)
+    assert len(found) == 1
+    assert "'backtest_pvalue(...)' is computed from the whole series" in found[0]

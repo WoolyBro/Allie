@@ -96,3 +96,13 @@ def test_pct_change_matches_pandas() -> None:
     expected = pd.Series(values).pct_change().to_numpy()
     result = pct_change(_series(*values)).data
     np.testing.assert_allclose(result, expected, equal_nan=True)
+
+
+def test_append_returns_a_new_series_one_longer() -> None:
+    from allie.stdlib.series_ops import append
+
+    original = _series(1.0, 2.0)
+    longer = append(original, 3.5)
+    assert list(longer.data) == [1.0, 2.0, 3.5]
+    assert list(original.data) == [1.0, 2.0]  # series are immutable
+    assert list(append(SeriesValue([]), 7.0).data) == [7.0]

@@ -15,10 +15,11 @@ Three things it does that a backtesting *library* structurally cannot:
 - **Look-ahead bias is a compile error.** A strategy whose decisions
   depend on future data fails to compile, and `allie check --audit`
   confirms it by experiment. See below.
-- **Multiple-comparisons correction is built in.** `bonferroni`,
-  `benjamini_hochberg`, and a seeded `permutation_pvalue` are stdlib
-  functions, so correcting a window sweep is a one-liner instead of an
-  intention.
+- **"Is it real, or the best of many tries?" is built in.** A backtest's
+  timing is tested against its own positions shifted in time, a sweep's
+  winner has its Sharpe deflated for being the winner, and Holm and
+  Benjamini-Hochberg correct for having tried many. All are exact tests,
+  each checked by simulation to hold its error rate. See below.
 - **`--verify` cross-checks three independent backends** and refuses to
   report a result they disagree on.
 
@@ -96,7 +97,7 @@ rest.
 ```bash
 git clone <this-repo> && cd Lang
 make install          # uv sync --group dev
-make test             # 1237 tests
+make test             # 1277 tests
 make check            # what CI runs: lint, formatting, types, tests with coverage
 make format           # fix lint findings and formatting in place
 uv run pre-commit install   # the same lint, format and type checks on every commit
@@ -163,7 +164,8 @@ print(sharpe(test.returns, 252) == test.sharpe);             // true: one defini
 ```
 
 A strategy declared inside a loop captures that iteration's indicators,
-so a parameter sweep is a `for` loop, and correcting it is `bonferroni`.
+so a parameter sweep is a `for` loop, and judging it is `holm` and
+`deflated_sharpe` ([below](#is-it-real-or-the-best-of-many-tries)).
 [`examples/strategies.qs`](examples/strategies.qs) runs all of it.
 
 The engine errs against the strategy, not for it: orders fill at the
@@ -241,6 +243,42 @@ The test suite holds the analysis to that definition. Across hundreds of
 generated programs, every one the analysis accepts must pass the audit.
 For each kind of source and decision the analysis rejects, there is a
 program in which it changes a trade.
+
+## Is it real, or the best of many tries?
+
+Sweep five moving-average windows and the best one will look good even
+if all five are noise. A backtesting library reports the winner. Allie
+gives you three questions to ask it, each answered by a builtin:
+
+```
+$ allie run examples/rigor.qs
+...
+significant after correcting for five tries (Holm, then BH):
+Series[False, False, False, False, False]
+Series[False, False, False, False, False]
+best Sharpe, and the chance its true Sharpe is above 0 -- alone, then deflated:
+1.8433820619514698
+0.8144428401673096
+0.7267297108981385
+```
+
+- **Is the timing luck?** `backtest_pvalue(r)` shifts the strategy's own
+  positions to every other point in time and asks how often they earn as
+  much. Shifting keeps how long positions are held; shuffling bars one by
+  one would not. On series as persistent as a trend signal, a shuffle test
+  calls chance significant at 5% in 48% of trials. The shift test does so
+  in 3%.
+- **Does it survive having tried them all?** `holm` and
+  `benjamini_hochberg` take a series of p-values the loop collected with
+  `append`.
+- **Is the winner's Sharpe real?** `deflated_sharpe` judges it against
+  the Sharpe the best of that many zero-skill strategies would reach by
+  luck. Picking the best of 20 such strategies fools a plain Sharpe test
+  64% of the time and the deflated one 0.1% of the time.
+
+Every test is exact (no sampling, no seed), and
+`tests/unit/test_rigor_calibration.py` checks each one's error rate by
+simulation. On 60 bars nothing survives, and on 60 bars nothing should.
 
 ## A quant standard library that handles real data
 

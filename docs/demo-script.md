@@ -76,9 +76,10 @@ Run: `allie check --audit examples/cheat_demo.qs` (a strategy using
 
 Optional, if time: `allie run examples/rigor.qs`
 
-> "And this corrects a window sweep for multiple comparisons — window 10
-> looks significant at p=0.02 until you admit you tried five windows,
-> then it's 0.11 and it isn't."
+> "And this asks whether a sweep's winner is real. The best of five
+> windows has a Sharpe of 1.84, and a plain Sharpe test says 81% likely
+> real. Deflated for being the best of five, it's 73%, and nothing
+> survives the multiple-testing correction. On 60 bars, nothing should."
 
 ## If you have longer — the best bug
 
@@ -92,7 +93,7 @@ Optional, if time: `allie run examples/rigor.qs`
 >
 > Everything runs on three independent backends — tree-walking
 > interpreter, IR interpreter, and the JIT — and they're cross-validated
-> against each other on every test. 1237 tests, 97% coverage."
+> against each other on every test. 1277 tests, 97% coverage."
 
 ---
 

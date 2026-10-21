@@ -193,7 +193,11 @@ WHOLE_HISTORY_FUNCTIONS: frozenset[str] = frozenset(
         "expected_shortfall",
         "beta",
         "permutation_pvalue",
+        "backtest_pvalue",
+        "probabilistic_sharpe",
+        "deflated_sharpe",
         "benjamini_hochberg",
+        "holm",
         # How many bars there are, the later ones included: fine as a
         # loop bound or a backtest's range, not inside a decision.
         "len",
@@ -229,6 +233,8 @@ POINT_IN_TIME_FUNCTIONS: frozenset[str] = frozenset(
         "ATR",
         "cumsum",
         "diff",
+        # One more element at the end; every earlier one is as it was.
+        "append",
         "pct_change",
         "log_returns",
         "cumulative_returns",
@@ -1054,7 +1060,7 @@ def _reads_whole_history(call: Call) -> bool:
         and callee.name in WHOLE_HISTORY_FUNCTIONS
         and any(
             isinstance(argument.inferred_type, (SeriesType, MatrixType))
-            or argument.inferred_type == PRICE_SERIES
+            or argument.inferred_type in (PRICE_SERIES, BACKTEST_RESULT)
             for argument in call.arguments
         )
     )

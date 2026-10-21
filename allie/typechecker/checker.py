@@ -365,6 +365,21 @@ class TypeChecker:
         )
 
     def _check_let(self, stmt: LetStmt) -> None:
+        initializer = stmt.initializer
+        if (
+            stmt.type_annotation is not None
+            and isinstance(initializer, ArrayLiteral)
+            and not initializer.elements
+        ):
+            declared = self._resolve_type_annotation(stmt.type_annotation)
+            if isinstance(declared, SeriesType) and declared.elem in _NUMERIC:
+                # `let sharpes: Series[Float] = [];` -- the annotation says
+                # what the empty literal holds, which it can't say itself.
+                initializer.inferred_type = declared
+            else:
+                self._value(initializer)  # "cannot infer the type of an empty ..."
+            self.env.define(stmt.name, declared)
+            return
         init_type = self._value(stmt.initializer)
         if stmt.type_annotation is None:
             self.env.define(stmt.name, init_type)
