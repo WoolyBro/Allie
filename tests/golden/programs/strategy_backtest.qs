@@ -1,8 +1,8 @@
-// Guards the Call-into-backtest-engine lowering. Phase 7 had to rewrite
-// this path entirely because the Phase 5.2 version was structurally
-// wrong (nameless declare, `when` bodies lowered inline and
-// unconditionally, raw strings where register names were expected) and
-// nothing caught it. This snapshot is that missing guard.
+// Guards the Call-into-backtest-engine lowering. This path was once
+// structurally wrong -- a nameless declare, `when` bodies lowered inline
+// and unconditionally, raw strings where register names were expected --
+// and nothing caught it, because nothing compared its output. This
+// snapshot does.
 let AAPL = load("@FIXTURE@");
 let fast: Series[Float] = SMA(AAPL.close, 5);
 let slow: Series[Float] = SMA(AAPL.close, 20);

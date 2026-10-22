@@ -12,10 +12,9 @@ optimized across, which is the safe direction to be wrong in. `load` and
 `print` are excluded because they're I/O; `normal` is excluded even
 though it's technically deterministic given the same seed, because
 silently deduplicating a call the user wrote out twice would be a
-surprising thing for a "random sample" builtin to do. `buy`/`sell` don't
-exist as registered builtins yet (Phase 7), but are listed here too, per
-the merge notes: both are new, both side-effecting, both easy to forget
-if this set were duplicated instead of shared.
+surprising thing for a "random sample" builtin to do. The order
+builtins (`buy`, `sell`, `short`, `cover`, `target`) change the
+backtest's position, so they are impure too.
 """
 
 from __future__ import annotations
@@ -111,9 +110,6 @@ PURE_FUNCTIONS: frozenset[str] = frozenset(
 # every registered builtin appears in exactly one of these two sets, so
 # adding a builtin without deciding whether it is pure fails the build
 # rather than silently defaulting to "not optimized".
-#
-# That test was added in Phase 9 after the audit found the then-builtin
-# `crosses_above`/`crosses_below` (Phase 7) in neither set.
 KNOWN_IMPURE_FUNCTIONS: frozenset[str] = frozenset(
     {"load", "print", "normal", "buy", "sell", "short", "cover", "target"}
 )

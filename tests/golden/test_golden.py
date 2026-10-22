@@ -1,4 +1,4 @@
-"""Golden snapshot tests for lowering output -- Phase 8.1.
+"""Golden snapshot tests for lowering output.
 
 For a handful of representative programs, this snapshots both the Allie
 IR dump and the LLVM IR dump. A test fails (with a diff) if lowering
@@ -7,15 +7,14 @@ behavioral tests would miss -- a lowering can produce different
 instructions and still compute the right answer, right up until the day
 it doesn't.
 
-Two programs are here specifically because Phase 8.1 called them out as
-the paths most likely to silently drift:
+Two programs guard the paths most likely to drift silently:
 
-- `for_loop` -- guards the Phase 5.2 desugar-to-`while` lowering. If a
+- `for_loop` -- the desugar of `for` into `while`'s shape. If a
   `for`-specific code path ever creeps into lowering or codegen, the
   Label/Jump shape here changes and this fails.
-- `strategy_backtest` -- guards the `Call`-into-backtest-engine
-  lowering, which Phase 7 had to rewrite once precisely because it was
-  structurally wrong and nothing caught it.
+- `strategy_backtest` -- the `Call`s into the backtest engine, a path
+  that was once structurally wrong with nothing to catch it (`when`
+  bodies lowered inline, so they ran in sequence instead of per bar).
 
 ## LLVM IR is not deterministic without normalization
 
@@ -164,11 +163,10 @@ def test_normalization_actually_makes_dumps_stable() -> None:
 
 
 def test_required_lowering_paths_are_covered() -> None:
-    """Phase 8.1 named two programs specifically. Guarding their
-    presence keeps a later cleanup from quietly removing the only
+    """Guarding the two programs' presence keeps a later cleanup from quietly removing the only
     coverage of the two most drift-prone lowering paths."""
     stems = {p.stem for p in _program_paths()}
-    assert "for_loop" in stems, "no for-loop golden program (guards the Phase 5.2 desugar)"
+    assert "for_loop" in stems, "no for-loop golden program (guards the for desugar)"
     assert "strategy_backtest" in stems, "no strategy/backtest golden program"
 
 

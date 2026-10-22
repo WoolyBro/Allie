@@ -1,20 +1,18 @@
-"""Cross-validation -- Phase 5.3's required test suite: run the same
-source through both the tree-walking interpreter (allie.runtime.
-interpreter) and the lowering -> IR-interpreter path (allie.ir), assert
-identical results. This is the test that actually proves the Phase 5.2
-`for` desugar preserves loop semantics (continue running the increment,
-break skipping it), not just that lowering produces *some* IR -- so it
-deliberately reuses the exact for/break/continue programs from
-tests/unit/test_interpreter.py (Phase 1), not just the scalar/quant
-ones, plus the Phase 4 quant integration programs.
+"""Cross-validation: run the same source through both the tree-walking
+interpreter (allie.runtime.interpreter) and the lowering -> IR
+interpreter path (allie.ir), and assert identical results. This is what
+proves the `for` desugar preserves loop semantics (`continue` running
+the increment, `break` skipping it), not just that lowering produces
+*some* IR -- so it reuses the exact for/break/continue programs from
+tests/unit/test_interpreter.py, plus the quant integration programs.
 
-Two of test_interpreter.py's programs are deliberately NOT reused here:
-the closure-capture tests (a function returning a function; two
-functions sharing one mutable variable). allie.ir.lowering's module
-docstring documents why -- functions are static, name-registered, not
-first-class closures at the IR level, so those two programs have no way
-to run through this path at all. Not a bug being swept under the rug;
-a scoped, written-down limitation.
+Two of test_interpreter.py's programs are NOT reused here: the
+closure-capture tests (a function returning a function; two functions
+sharing one mutable variable). They run untyped programs on the tree
+walker alone. The language has no closures -- the type checker rejects
+them -- and the IR has no first-class functions (allie.ir.lowering's
+module docstring), so those programs have no way to run through this
+path at all.
 """
 
 from __future__ import annotations

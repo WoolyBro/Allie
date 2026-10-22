@@ -1,23 +1,19 @@
-"""Phase 5: intermediate representation, lowering, and a second IR-based
-interpreter -- a real, working second execution path, not the
-aspirational skeleton this package started as.
+"""The intermediate representation: a flat list of instructions over
+virtual registers (instructions.py), lowered from the typed AST
+(lowering.py), checked by a verifier (verify.py), analyzed as a
+control-flow graph (cfg.py), and run by its own interpreter
+(interpreter.py).
 
-**Note on scope, since this goes beyond what was earlier agreed**: when
-this package was first scaffolded (Phase 0), the plan was "tree-walking
-interpreter stays what actually runs for the foreseeable phases; ir/
-optimizer/codegen are aspirational placeholders" (docs/spec.md
-"Considered alternatives"). Phase 5 explicitly asked for a real,
-independent execution path with a cross-validation test suite against
-the tree-walking interpreter, so that's what got built here -- the
-tree-walking interpreter (allie.runtime.interpreter) is still what
-`allie run` actually executes; this IR path exists for the optimizer
-passes (allie.optimizer) to operate on and be demonstrated against, per
-Phase 5.3/5.4.
+It is the middle of two of the three execution paths: the IR
+interpreter runs it, and the LLVM backend (allie.codegen) compiles it.
+The tree-walking interpreter skips it. The optimizer (allie.optimizer)
+works on this representation, so both IR-based paths run optimized
+code, and `--verify` runs all three and reports a result only if they
+agree.
 
 See allie.ir.lowering's module docstring for the two significant
-lowering decisions (separate IRProgram per function; functions are
-static/name-registered, not first-class closures) and their consequence
-for what the cross-validation suite can and can't cover.
+lowering decisions: a separate IRProgram per function, and functions
+that are static and called by name rather than first-class values.
 """
 
 from allie.ir.instructions import (

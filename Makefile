@@ -1,4 +1,4 @@
-.PHONY: help install test cov lint format typecheck check bench bench-quick bench-compare regen-fixtures regen-golden clean
+.PHONY: help install test cov lint format typecheck check demo bench bench-quick bench-compare regen-fixtures regen-golden clean
 
 PY := uv run
 
@@ -10,6 +10,7 @@ help:
 	@echo "make format          ruff: fix what can be fixed, then format"
 	@echo "make typecheck       mypy"
 	@echo "make check           lint + typecheck + cov (what CI runs)"
+	@echo "make demo            the 60-second demo, one beat per Enter (docs/demo-script.md)"
 	@echo "make bench           regenerate benchmarks/results.{md,csv,json} from a clean run"
 	@echo "make bench-quick     3-trial smoke run, prints to stdout, writes nothing"
 	@echo "make bench-compare   new run vs the committed results.json (same machine only)"
@@ -37,6 +38,9 @@ typecheck:
 	$(PY) mypy .
 
 check: lint typecheck cov
+
+demo:
+	PYTHON="$$(uv run python -c 'import sys; print(sys.executable)')" bash scripts/demo.sh
 
 # Reproducibility matters for the write-up: this always regenerates from
 # a clean run rather than editing the committed numbers by hand.

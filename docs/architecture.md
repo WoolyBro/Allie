@@ -157,9 +157,9 @@ whether a backtest runs.
 make "you cannot see the future" structural rather than a discipline the
 author maintains. The backtest engine enforces that at runtime: an order
 fills at the next bar's open. But that constrains the *engine*, not the
-*data* handed to it. A strategy built on `shift(close, -1)` compiled
-fine and backtested at Sharpe 3.34 while the honest version scored
-−0.16. This pass closes the gap the runtime guarantee never covered.
+*data* handed to it. A strategy built on `shift(close, -1)` would
+backtest at Sharpe 3.31, against 1.14 for the same rule on today's
+close. This pass closes the gap the runtime guarantee never covered.
 
 **Design decision — flow-sensitive, with control dependence.** The state
 is a scope stack mapping each variable to its taint, whether it's proven

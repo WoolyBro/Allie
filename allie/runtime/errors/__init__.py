@@ -1,6 +1,6 @@
 """Runtime error hierarchy — distinct from allie.errors.
 
-Design decision (Phase 0.6): runtime errors raise Python exceptions and
+Design decision: runtime errors raise Python exceptions and
 halt the running strategy, rather than propagating as Result-style
 values. Compile-time problems (syntax, type errors) are
 DiagnosticBag entries; this module is for failures that only manifest

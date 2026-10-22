@@ -1,11 +1,11 @@
-"""Static types -- Phase 3.1, extended with the quant types in Phase 4.1.
+"""Static types.
 
 Every Type subclass's equality/hash are derived generically from its own
 __str__ (see the base Type class), and is_assignable's _WIDENING table is
 keyed by (str, str) pairs rather than a hardcoded enumeration of "the
-known types" -- exactly what let SeriesType/MatrixType/VectorType/
-DateType/DateRangeType get added below (Phase 4) without reworking either
-mechanism, as planned back in Phase 3.
+known types" -- which is what lets a new type (the series and matrix
+types, the quant types below) be added without reworking either
+mechanism.
 """
 
 from __future__ import annotations
@@ -79,9 +79,8 @@ class DateRangeType(_SingletonType):
 
 class PriceSeriesType(_SingletonType):
     """The type of stdlib `load`'s return value: an OHLCV price history
-    (allie.runtime.values.PriceSeriesValue). Not in Phase 4.1's original
-    type list, but needed to give `load` a checkable FunctionType
-    signature -- added here rather than leaving `load` untyped. Not
+    (allie.runtime.values.PriceSeriesValue), which gives `load` a
+    checkable signature and `AAPL.close` a checkable field. Not
     parameterized: always exactly open/high/low/close/volume/dates, so
     no elem type is needed, unlike Series/Matrix/Vector."""
 
@@ -98,7 +97,7 @@ class BacktestResultType(_SingletonType):
 
 
 class StrategyType(_SingletonType):
-    """The type of a declared `strategy` (Phase 7.2), so a `backtest`
+    """The type of a declared `strategy`, so a `backtest`
     statement can verify its target through the ordinary
     TypeEnvironment lookup rather than a separate strategy registry.
     Deliberately NOT registered in _BASE_TYPES_BY_NAME: a strategy is

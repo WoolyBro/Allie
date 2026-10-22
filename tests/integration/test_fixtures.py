@@ -1,8 +1,8 @@
-"""Fixture-driven integration tests -- Phase 8.1.
+"""Fixture-driven integration tests.
 
 Every `.qs` file in `fixtures/` is paired with a `.expected` file, and
 one parametrized test runs each through the full pipeline and diffs the
-output. Three families are represented, per Phase 8.1:
+output. Three families are represented:
 
 - **pure-CS** (`cs_*.qs`): `for`/`while`/`break`/`continue`, recursion,
   goofy keyword spellings -- no quant content at all.
@@ -123,7 +123,7 @@ def test_fixture_output_matches_expected(path: Path, backend: str) -> None:
 
 
 def test_every_family_is_represented() -> None:
-    """Guards Phase 8.1's own requirement: this suite is only meaningful
+    """This suite is only meaningful
     if all three families are actually present. Without this, deleting
     (or never adding) the combined fixture would silently shrink
     coverage while the suite still passed."""

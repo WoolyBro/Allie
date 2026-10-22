@@ -1,11 +1,9 @@
-"""Phase 6: a third, real execution backend -- LLVM codegen + MCJIT,
-built on top of the custom IR (Phase 5). `allie run` still executes via
-the tree-walking interpreter by default (docs/spec.md "Considered
-alternatives" -- that decision hasn't changed); this backend is
-selectable via `--backend llvm` for the reasons in `allie/codegen/
-llvm_lowering.py`'s module docstring (native LLVM for scalar arithmetic
-and user functions, bridged calls back into the existing Python/numpy
-runtime for everything else).
+"""The third execution backend: LLVM codegen and MCJIT, compiling the
+custom IR (allie.ir). Native LLVM for scalar arithmetic and user
+functions, bridged calls back into the Python/numpy runtime for
+everything else -- see llvm_lowering.py's module docstring.
+`--backend llvm` selects it (`python main.py` defaults to it); `allie
+run` defaults to the tree-walking interpreter, which starts faster.
 """
 
 from allie.codegen.jit import compile_and_run

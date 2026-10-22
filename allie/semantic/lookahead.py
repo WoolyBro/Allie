@@ -16,9 +16,10 @@ hands the engine, and that is where the bug actually lives:
     }
 
 `shift(s, -1)[i]` is `s[i+1]` -- tomorrow's price, available today.
-Before this pass existed the language accepted that happily, and the
-backtest reported Sharpe 3.34 / CAGR +41.56% against the honest
-strategy's -0.16 / -2.89%. Nothing anywhere said the number was
+Without this pass the language accepts that happily, and the backtest
+reports Sharpe 3.31 / CAGR +41.78%, against 1.14 / +13.39% for the same
+rule on today's close (examples/cheat_demo.qs; tests/integration/
+test_demo.py measures both). Nothing anywhere says the number is
 meaningless. This pass makes that program **fail to compile**.
 
 ## What it does

@@ -41,7 +41,7 @@ def _check_window(fn_name: str, window: int, at_least: int = 1) -> None:
         raise AllieValueError(f"{fn_name}: window must be at least {at_least}, got {window}")
 
 
-def SMA(series: SeriesValue, window: int) -> SeriesValue:  # noqa: N802 - matches spec's exact name
+def SMA(series: SeriesValue, window: int) -> SeriesValue:  # noqa: N802 - the indicator's usual name
     """Simple moving average. The first `window - 1` bars are NaN,
     matching pandas' `.rolling(window).mean()`.
 
@@ -52,7 +52,7 @@ def SMA(series: SeriesValue, window: int) -> SeriesValue:  # noqa: N802 - matche
     return SeriesValue(rolling(series.data, window, np.mean))
 
 
-def EMA(series: SeriesValue, span: int) -> SeriesValue:  # noqa: N802 - matches spec's exact name
+def EMA(series: SeriesValue, span: int) -> SeriesValue:  # noqa: N802 - the indicator's usual name
     """Exponential moving average, smoothing factor alpha = 2/(span+1),
     seeded with the first value. Missing bars are skipped -- the
     average runs over the bars that have a value -- so `EMA(SMA(c, 20),

@@ -1,6 +1,6 @@
 """Token types and the Token record produced by allie.lexer.lexer.
 
-TokenType enumerates every terminal the Phase 2 parser will see. Control-
+TokenType enumerates every terminal the parser sees. Control-
 flow keywords support slang aliases (allie.lexer.keywords); quant
 keywords (STRATEGY, WHEN, CROSSES_ABOVE, ...) are canonical-only in v1 --
 see docs/keywords.md.

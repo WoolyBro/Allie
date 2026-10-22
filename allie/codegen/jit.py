@@ -1,8 +1,7 @@
-"""JIT execution -- Phase 6.4.
+"""JIT execution.
 
-Verified against currently-installed llvmlite (0.49, bundling LLVM
-22.1.0) rather than assumed from memory, per the spec's own warning that
-this API drifts across versions:
+llvmlite's API drifts across versions, so these were verified against
+the installed one (0.49, bundling LLVM 22.1.0) rather than assumed:
 
 - `llvm.initialize()` is deprecated *and removed* in this version -- a
   bare call to it raises `RuntimeError` outright, not a warning.

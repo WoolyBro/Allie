@@ -1,19 +1,16 @@
-"""Value representations -- Phase 1's scalars, extended with Phase 4's
-quant runtime values (SeriesValue/MatrixValue/PriceSeriesValue) and the
-BuiltinFunction wrapper that lets the interpreter call a stdlib function
-through the exact same path as a user-defined Closure.
+"""Runtime values: scalars, the quant values (SeriesValue, MatrixValue,
+PriceSeriesValue), and the BuiltinFunction wrapper that lets the
+interpreter call a stdlib function through the exact same path as a
+user-defined Closure.
 
 Scalars are raw Python int/float/bool/str -- no wrapper class.
 Numeric promotion rule: int op float -> float.
 
-SeriesValue/MatrixValue are backed by plain numpy float64 ndarrays, NOT
-pandas.Series/DataFrame. That's a deliberate simplification versus
-docs/spec.md's original "Series wraps pandas.Series, don't reimplement
-DatetimeIndex" aspiration -- Phase 4 asked for a thin numpy wrapper
-specifically, so pandas stays a test-only dependency for the stdlib
-functions (cross-checking hand-computed values), not a runtime one, for
-now. Revisit the pandas-backed version if/when real DatetimeIndex
-alignment is needed.
+SeriesValue/MatrixValue are backed by plain numpy float64 ndarrays, not
+pandas.Series/DataFrame. The stdlib applies its own missing-value rule
+(allie/stdlib/missing.py) and needs no index alignment, so pandas isn't
+a runtime dependency at all -- only the oracle the tests check the
+stdlib against (docs/spec.md records the revision).
 """
 
 from __future__ import annotations
@@ -66,8 +63,8 @@ class BuiltinFunction:
 
 @dataclass(eq=False)
 class SeriesValue:
-    """A 1-D numeric series -- Phase 4's default array-literal type and
-    the return type of most stdlib functions (SMA, mean, ...).
+    """A 1-D numeric series -- what an array literal of numbers builds,
+    and the return type of most stdlib functions (SMA, mean, ...).
 
     `eq=False`: numpy arrays don't support the plain `==` a dataclass's
     auto-generated __eq__ would produce (it returns an elementwise array,
@@ -92,7 +89,7 @@ class SeriesValue:
 @dataclass(eq=False)
 class BoolSeriesValue:
     """A 1-D boolean series -- the runtime value behind `Series<Bool>`,
-    produced by `crosses_above`/`crosses_below` (Phase 7.3).
+    produced by comparisons (`close > open`), crossings and `and`/`or`.
 
     Separate from SeriesValue rather than encoding True/False as
     1.0/0.0 float64: SeriesValue enforces float64 in `__post_init__` by

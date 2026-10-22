@@ -1,4 +1,4 @@
-"""Tests for Phase 4.1: the quant type extensions to allie/typechecker/."""
+"""Tests for the quant types in allie/typechecker/."""
 
 from __future__ import annotations
 
@@ -127,8 +127,8 @@ def test_matrix_and_vector_types_are_distinct_from_series() -> None:
 
 
 def test_when_clause_with_series_float_operands_passes() -> None:
-    # Body is a plain expression statement, not a builtin call -- the
-    # stdlib registry (Phase 4.3) doesn't exist yet, so `buy()` would
+    # Body is a plain expression statement, not a builtin call: this
+    # checker is built without the stdlib's signatures, so `buy()` would
     # fail as an undefined name for reasons unrelated to what this test
     # is checking (the operand types, not call resolution).
     _check(

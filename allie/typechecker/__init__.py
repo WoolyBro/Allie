@@ -1,6 +1,7 @@
-"""Phase 3: static type checker. Validates optional annotations
-(`Series[Float]`-style); unannotated `let` bindings stay dynamic
-(inferred from the initializer). See docs/spec.md "Typing"."""
+"""Static type checker. Every expression gets a type: a `let` without
+an annotation takes its initializer's, one with an annotation must match
+it, and functions declare their signatures. See
+docs/language-reference.md "Types"."""
 
 from allie.typechecker.checker import TypeChecker, TypeEnvironment
 from allie.typechecker.errors import QSTypeError

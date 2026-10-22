@@ -1,4 +1,4 @@
-"""Tests for allie/stdlib/stats_fns.py -- Phase 4.3."""
+"""Tests for allie/stdlib/stats_fns.py."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ def _series(*values: float) -> SeriesValue:
 
 def test_normal_statistical_properties_within_tolerance() -> None:
     # Large N -- checking statistical properties (mean/std within
-    # tolerance), not exact values, per the spec.
+    # tolerance): a random sample has no exact values to check.
     result = normal(mean=5.0, std=2.0, n=200_000, seed=42).data
     assert result.mean() == pytest.approx(5.0, abs=0.05)
     assert result.std(ddof=1) == pytest.approx(2.0, abs=0.05)

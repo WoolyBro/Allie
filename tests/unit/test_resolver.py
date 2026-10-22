@@ -1,6 +1,5 @@
-"""Tests for allie/semantic/resolver.py (designed alongside the parser
-since no separate resolver spec was provided; Phase 3's typechecker spec
-assumes this exists)."""
+"""Tests for allie/semantic/resolver.py: scopes, and where `break`,
+`continue`, `return` and `when` are allowed."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Three-way cross-validation -- Phase 6.5's required suite: run the same
+"""Three-way cross-validation: run the same
 source through the tree-walking interpreter, the IR interpreter, and the
 LLVM/MCJIT backend, and assert all three agree. Three independent
 execution paths agreeing is a much stronger correctness claim than any
@@ -9,20 +9,19 @@ function's locals are gone once it returns, so `print(...)` is the only
 observable all three backends share. Each program below therefore ends
 by printing whatever it wants checked.
 
-Scope, carried forward and re-stated rather than silently narrowed:
+Scope:
 
-- **Closure-capture programs are excluded**, as in Phase 5.3 -- the IR
-  path has no first-class function values (allie.ir.lowering's
-  docstring), so neither the IR interpreter nor the LLVM backend can run
-  them.
-- **Every program here is fully type-annotated**, unlike Phase 5.3's
-  suite. The LLVM backend needs the Phase 6 `register_types` retrofit,
-  which is populated from the type checker's annotations -- so unlike
-  the two interpreters, it can't run a program that never type-checked.
-- **`for`/`break`/`continue` programs are included**, per Phase 6.5's
-  explicit ask, with exact iteration counts asserted (test_iteration_*
-  below) -- the desugar-then-lower path is new machinery neither
-  interpreter exercises, and off-by-one is the classic failure here.
+- **No closure-capture programs**: the language has none (the type
+  checker rejects them), and the IR has no first-class function values
+  (allie.ir.lowering's docstring).
+- **Every program here type-checks**: the LLVM backend reads each
+  register's type from `register_types`, which comes from the type
+  checker's annotations, so unlike the two interpreters it can't run a
+  program that never type-checked.
+- **`for`/`break`/`continue` programs are included**, with exact
+  iteration counts asserted (test_iteration_* below): the
+  desugar-then-lower path is machinery neither interpreter exercises,
+  and off-by-one is the classic failure there.
 """
 
 from __future__ import annotations
@@ -234,10 +233,10 @@ def test_all_three_backends_agree(name: str) -> None:
 
 # ---- exact iteration counts through the JIT path specifically ----
 #
-# Phase 6.5 asks for these separately from the agreement suite above:
-# off-by-one is the classic loop-lowering bug, and asserting an exact
-# expected number (rather than just "all three match") is what catches a
-# case where every backend is consistently wrong.
+# Separate from the agreement suite above: off-by-one is the classic
+# loop-lowering bug, and asserting an exact expected number (rather than
+# just "all three match") is what catches a case where every backend is
+# consistently wrong.
 
 
 @pytest.mark.parametrize(
@@ -281,7 +280,7 @@ def test_exact_iteration_count_through_jit(source: str, expected: str) -> None:
 
 @pytest.mark.parametrize("name", sorted(_PROGRAMS), ids=sorted(_PROGRAMS))
 def test_optimized_llvm_matches_unoptimized(name: str) -> None:
-    """The optimizer (Phase 5.4) runs over the same IR the LLVM backend
+    """The optimizer runs over the same IR the LLVM backend
     then lowers, and its passes rewrite register references (CSE) and
     delete instructions (DCE) -- so it could in principle invalidate the
     `register_types` map LLVM lowering depends on. Running every program

@@ -1,10 +1,11 @@
 """Tests for allie/semantic/lookahead.py -- look-ahead bias as a
 compile-time guarantee.
 
-The motivating case, measured before the pass existed: a strategy using
-`shift(close, -1)` (tomorrow's price, available today) compiled fine and
-backtested at Sharpe 3.34 / CAGR +41.56%, against the honest version's
--0.16 / -2.89%. Nothing anywhere indicated the number was meaningless.
+The motivating case: a strategy using `shift(close, -1)` (tomorrow's
+price, available today) would backtest at Sharpe 3.31 / CAGR +41.78%,
+against 1.14 / +13.39% for the same rule on today's close, and nothing
+anywhere would say the number is meaningless (tests/integration/
+test_demo.py measures both, with this pass skipped).
 """
 
 from __future__ import annotations

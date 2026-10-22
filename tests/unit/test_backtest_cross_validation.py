@@ -1,18 +1,14 @@
-"""Phase 7.5 end-to-end tests for the backtest DSL.
-
-Three things this covers that nothing earlier did:
+"""End-to-end tests for the backtest DSL. Three things:
 
 1. The full `MovingAverage` example running on the real fixture through
    the whole pipeline, asserting the results table renders and metrics
    land in sane *bounds* (not exact values -- it's realistic data).
-2. **Three-backend agreement on the quant DSL specifically.** Phase 6.5
-   established the "three independent execution paths agreeing"
-   standard, but only ever tested it on scalar/loop programs. This is
-   where it gets applied to `strategy`/`when`/`backtest`.
-3. Re-running the Phase 2.5 semantic rules (`break`/`continue` inside a
-   `when` action, `buy`/`sell` outside a strategy) against the *fully
-   wired* checker and interpreter, confirming enforcement survived the
-   stubs being replaced by real execution paths.
+2. **Three-backend agreement on the quant DSL specifically**: the
+   "three independent execution paths agree" standard, applied to
+   `strategy`/`when`/`backtest` rather than scalar and loop programs.
+3. The placement rules (`break`/`continue` inside a `when` action,
+   `buy`/`sell` outside a strategy), checked against the whole
+   pipeline, not just the resolver.
 """
 
 from __future__ import annotations
@@ -181,7 +177,7 @@ def test_all_three_backends_agree_on_backtest_metrics(name: str) -> None:
     assert "BACKTEST RESULTS" in tree_out
 
 
-# ---- Phase 2.5 semantic rules, re-checked against the wired pipeline ----
+# ---- placement rules, checked against the whole pipeline ----
 
 
 @pytest.mark.parametrize("order", ["buy()", "sell()", "short()", "cover()", "target(0.5)"])
@@ -234,9 +230,7 @@ def test_continue_inside_a_when_action_is_rejected() -> None:
 
 
 def test_break_in_a_when_action_cannot_target_an_enclosing_loop() -> None:
-    # The `inside_when` flag existed since Phase 2.5 but was never read,
-    # so this case silently passed until Phase 7. A `when` action is a
-    # per-bar callback -- it cannot jump out to a loop enclosing the
+    # A `when` action is a per-bar callback -- it cannot jump out to a loop enclosing the
     # strategy declaration.
     errors = _resolver_errors(
         """
@@ -269,7 +263,7 @@ def test_break_inside_a_function_cannot_target_an_enclosing_loop() -> None:
     assert any("break" in e for e in errors)
 
 
-# ---- backtest / strategy type rules (Phase 7.2) ----
+# ---- backtest / strategy type rules ----
 
 
 def test_backtest_on_undeclared_strategy_is_rejected() -> None:

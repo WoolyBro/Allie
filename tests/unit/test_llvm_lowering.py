@@ -1,4 +1,4 @@
-"""Tests for allie/codegen/{llvm_lowering,jit}.py -- Phase 6. Verifies
+"""Tests for allie/codegen/{llvm_lowering,jit}.py. Verifies
 the LLVM backend on its own (execution correctness, native-vs-bridged
 dispatch, the documented non-scalar-user-function limitation). See
 test_llvm_cross_validation.py for the required three-way agreement

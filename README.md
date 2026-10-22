@@ -97,9 +97,10 @@ rest.
 ```bash
 git clone <this-repo> && cd Lang
 make install          # uv sync --group dev
-make test             # 1277 tests
+make test             # 1284 tests
 make check            # what CI runs: lint, formatting, types, tests with coverage
 make format           # fix lint findings and formatting in place
+make demo             # the 60-second demo, one beat per Enter
 uv run pre-commit install   # the same lint, format and type checks on every commit
 ```
 
@@ -186,8 +187,8 @@ print(mean(r.trade_returns));
 
 `shift(s, -1)[i]` is `s[i+1]` — tomorrow's price, available today. Feed
 that into a trading signal and the backtest reports Sharpe 3.31 / CAGR
-+41.78%, against the honest strategy's −0.19 / −3.36%. Every number is
-meaningless and nothing says so.
++41.78%. The same rule on today's close scores 1.14 / +13.39%. Every
+number from the first is meaningless, and nothing says so.
 
 ```allie
 let tomorrow: Series[Float] = shift(AAPL.close, -1);

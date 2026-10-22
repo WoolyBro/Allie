@@ -1,4 +1,4 @@
-"""Phase 2: tokenizer for Allie's brace-based syntax (docs/spec.md)."""
+"""Tokenizer for Allie's brace-based syntax (docs/grammar.md)."""
 
 from allie.lexer.errors import LexError
 from allie.lexer.keywords import KEYWORD_ALIASES

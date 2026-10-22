@@ -1,4 +1,4 @@
-"""Tests for allie/ir/lowering.py -- Phase 5.2. Structural assertions on
+"""Tests for allie/ir/lowering.py. Structural assertions on
 the emitted instruction shapes, not just "the value comes out right"
 (that's what test_ir_cross_validation.py is for)."""
 
@@ -23,7 +23,7 @@ from allie.parser.parser import Parser
 
 
 def _lower(source: str):
-    # This file only cares about instruction shapes, not the Phase 6
+    # This file only cares about instruction shapes, not the
     # register_types/function_info lower_program also returns -- drop them.
     tokens = Lexer(source).scan_tokens()
     program = Parser(tokens).parse()
@@ -252,9 +252,9 @@ def test_strategy_and_backtest_lower_to_calls_not_inlined_control_flow() -> None
 
 
 def test_when_body_lowers_to_a_separate_callable_program_not_inline() -> None:
-    # Phase 7 rewrite: the Phase 5.2 lowering emitted the `when` body
-    # inline, so it ran unconditionally in sequence instead of per-bar
-    # when its signal fired. Each body is now its own zero-arg program,
+    # A `when` body lowered inline would run unconditionally, in
+    # sequence, instead of per bar when its signal fires. Each body is
+    # its own zero-arg program,
     # registered like an ordinary function so the engine (and the LLVM
     # backend) can invoke it.
     main, functions = _lower(
@@ -280,9 +280,8 @@ def test_when_body_lowers_to_a_separate_callable_program_not_inline() -> None:
 
 def test_backtest_passes_prices_as_a_value_not_a_name() -> None:
     # The LLVM bridge can't look a variable up by name, so the symbol is
-    # loaded into a register and passed as a value. (The Phase 5.2
-    # version put the raw strings in the arg list, which the IR
-    # interpreter would have read as register names.)
+    # loaded into a register and passed as a value. (Raw strings in the
+    # arg list would be read as register names by the IR interpreter.)
     main, _ = _lower("backtest S on AAPL from 0 to 1;")
     load = next(i for i in main.instructions if isinstance(i, LoadVar) and i.name == "AAPL")
     call = next(i for i in main.instructions if isinstance(i, Call))

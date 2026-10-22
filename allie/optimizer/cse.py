@@ -1,4 +1,4 @@
-"""Common subexpression elimination -- Phase 5.4. `run(program) ->
+"""Common subexpression elimination. `run(program) ->
 IRProgram`, pure function, no shared state with the other passes.
 
 A forward pass maintaining three caches, all keyed by *resolved*
@@ -21,16 +21,15 @@ substituted in before any cache lookup, via `resolve()`):
   before the reassignment, with no separate "clear the whole cache on
   any StoreVar" step needed.
 - `expr_cache` / `call_cache`: `(op, left, right) -> register` and
-  `(fn_name, args) -> register`, the literal cases from the spec. Calls
+  `(fn_name, args) -> register`. Calls
   are only cached when `fn_name` is in
   `allie.optimizer.pure_functions.PURE_FUNCTIONS` -- `print`/`load`/
-  `normal`/`buy`/`sell` (impure) are never collapsed, imported from that
+  `normal` and the order builtins (impure) are never collapsed, imported from that
   single shared location rather than redefined here (see that module's
   docstring for why `dce.py` and this file must not be able to disagree
   about what's pure).
 
-**A control-flow-join bug this found, not something the spec called
-out.** Every `Label` invalidates every cache, `const_cache` included.
+**Every `Label` invalidates every cache**, `const_cache` included.
 Without this, a naive linear scan happily "reused" a pre-loop `LoadVar`'s
 register for a read *inside* the loop body, because nothing in a single
 forward pass distinguishes "this is the same static instruction running

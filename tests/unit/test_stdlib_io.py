@@ -1,4 +1,4 @@
-"""Tests for allie/stdlib/io.py -- Phase 4.3."""
+"""Tests for allie/stdlib/io.py."""
 
 from __future__ import annotations
 

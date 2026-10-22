@@ -1,4 +1,4 @@
-"""IR interpreter -- Phase 5.3. A second, independent execution path for
+"""IR interpreter. A second, independent execution path for
 the same programs the tree-walking interpreter (allie.runtime.
 interpreter) already covers -- see tests/unit/test_ir_cross_validation.py,
 which runs the same source through both and asserts identical results.

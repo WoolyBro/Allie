@@ -1,8 +1,7 @@
 """Cross-cutting checklist: every user-facing error type carries
 location information where it has any, and formats it identically.
 
-Phase 9's checklist asks for this explicitly. Before this file existed
-the three types had drifted: `LexError` used
+Before this file existed the three types had drifted: `LexError` used
 `"... (line 1, col 7)"`, `QSTypeError` used `"... . Line 1, Column 7"`,
 and `AllieRuntimeError` had no `__str__` at all -- so runtime errors
 printed with no location and no type prefix. `QSTypeError`'s wording was

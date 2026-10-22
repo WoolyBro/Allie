@@ -1,9 +1,9 @@
 """Every example in `examples/` actually runs.
 
-Added in Phase 9 after finding `hello_world.ql` had been broken since
-Phase 0 -- it called `load_csv`/`sma`, which the stdlib registers as
-`load`/`SMA`. It was written as a target to build toward and then never
-revisited, so nothing caught it. A broken file named "hello world" is
+`hello_world.ql` was once broken for a long time -- it called
+`load_csv`/`sma`, which the stdlib registers as `load`/`SMA`. It was
+written as a target to build toward and then never revisited, so
+nothing caught it. A broken file named "hello world" is
 the worst one to leave lying around, since it's the first thing a reader
 tries.
 

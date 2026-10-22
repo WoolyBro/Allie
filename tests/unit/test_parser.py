@@ -1,5 +1,4 @@
-"""Tests for allie/parser/ (Phase 2.3, designed alongside the AST since no
-separate spec was provided). Targets docs/grammar.md."""
+"""Tests for allie/parser/. Targets docs/grammar.md."""
 
 from __future__ import annotations
 

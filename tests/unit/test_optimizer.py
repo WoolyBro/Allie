@@ -1,7 +1,7 @@
-"""Tests for allie/optimizer/ -- Phase 5.4. Hand-built "before" IRPrograms
-with an exact instruction-by-instruction "after" assertion, per the spec
--- these are meant to demonstrate the transformation itself, not just
-that the output value comes out the same."""
+"""Tests for allie/optimizer/. Hand-built "before" IRPrograms with an
+exact instruction-by-instruction "after" assertion -- these are meant
+to demonstrate the transformation itself, not just that the output
+value comes out the same."""
 
 from __future__ import annotations
 
@@ -321,16 +321,15 @@ def test_cse_does_not_alias_across_an_if_else_join() -> None:
     assert final_return.value == final_load.dest
 
 
-# ---- purity classification discipline (Phase 9 cross-cutting check) ----
+# ---- purity classification discipline ----
 
 
 def test_every_registered_builtin_is_classified_pure_or_impure() -> None:
     """Adding a stdlib builtin without deciding whether it's pure must
     fail the build, not silently default to "never optimized".
 
-    This test exists because the Phase 9 audit found `crosses_above` and
-    `crosses_below` (added in Phase 7) in neither set -- so CSE had been
-    quietly declining to optimize them, with nothing to flag it.
+    Two builtins once sat in neither set, so CSE quietly declined to
+    optimize them with nothing to flag it.
     """
     import allie.stdlib as stdlib
     from allie.optimizer.pure_functions import KNOWN_IMPURE_FUNCTIONS, PURE_FUNCTIONS

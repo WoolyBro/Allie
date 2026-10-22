@@ -1,4 +1,4 @@
-"""Python-side runtime bridge -- Phase 6.2/6.3. JIT-compiled machine code
+"""Python-side runtime bridge. JIT-compiled machine code
 cannot touch a `SeriesValue`/`PriceSeriesValue`/`str`/stdlib call
 directly; every one of those crosses the LLVM/Python boundary as an
 *opaque handle* (a plain 64-bit integer -- `id()` of a live Python
@@ -11,14 +11,12 @@ so without this the object could be garbage-collected out from under
 JIT-compiled code still holding its "pointer". `clear_registry()` resets
 it between runs so a long-lived process (tests!) doesn't grow unbounded.
 
-Deliberate deviation from the literal Phase 6.2 spec ("StringType -> i8*,
-pointer to a global constant, v1 -- no dynamic string ops needed"): Allie
-strings support runtime concatination via `+` (proven in the tree-walker/
-IR-interpreter tests), so a string's *value* isn't always known at
-compile time the way a fixed global constant would require. Every
-non-native-scalar type (String, Series, Matrix, Vector, PriceSeries, ...)
-uses this same boxed-handle scheme uniformly instead -- one mechanism,
-not a special case per type.
+Strings are handles too, not pointers to global constants: `+`
+concatenates them at run time, so a string's *value* isn't always known
+at compile time the way a fixed global constant would require. Every
+non-native-scalar type (String, Series, Matrix, PriceSeries, ...) uses
+this same boxed-handle scheme -- one mechanism, not a special case per
+type.
 
 `binop_bridge`/`unaryop_bridge` reuse `allie.ir.interpreter._apply_binop`/
 `_apply_unary` verbatim rather than reimplementing operator semantics a

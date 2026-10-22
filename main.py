@@ -1,12 +1,11 @@
-"""Phase 6.4 CLI entry point:
+"""`allie run`, with the LLVM/JIT backend as the default:
 
     python main.py <file.qs> [--debug-tokens] [--debug-ast] [--debug-ir] [--no-optimize]
 
-`allie run --backend llvm`, under the name Phase 6.4 specified: the same
-options, from the same definition (`allie.cli.add_run_arguments`), so the
-two entry points can't drift apart. Defaults to the LLVM/JIT backend, per
-Phase 6.4's pipeline (lex -> parse -> resolve -> type-check -> lower to
-IR -> optimize -> LLVM lowering -> MCJIT execute).
+The same options, from the same definition (`allie.cli.add_run_arguments`),
+so the two entry points can't drift apart. The pipeline: lex -> parse ->
+resolve -> type-check -> look-ahead -> lower to IR -> optimize -> LLVM
+lowering -> MCJIT execute.
 """
 
 from __future__ import annotations

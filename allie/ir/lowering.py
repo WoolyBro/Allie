@@ -1,6 +1,6 @@
-"""AST -> IR lowering -- Phase 5.2.
+"""AST -> IR lowering.
 
-Two decisions the spec left open, made and documented here:
+Two decisions, made and documented here:
 
 **Function bodies: separate IRProgram per function**, not labeled
 regions in one flat list. A flat-list-with-labels design would need
@@ -18,46 +18,37 @@ Every `FuncDecl` -- top-level or nested -- registers into one shared
 instruction is emitted at the *definition* site, and `Call` always
 refers to a callee *by name* (this only works when the AST's `Call.
 callee` is a plain `Identifier` -- anything else raises `LoweringError`).
-This is a real, deliberate limitation, not an oversight: it makes
-top-level functions and recursion (`factorial`, `fib` call themselves by
-name -- no closure capture needed) work identically to the tree-walking
-interpreter, but it does NOT support genuine lexical closures -- a
-function returned from another function and called later, capturing
-that specific call's local variable (`make_adder`/`adder`, or the
-shared-scope get/set pattern) has no way to work when calls dispatch by
-static name rather than through a captured-environment value. The
-Phase 5.3 cross-validation suite is scoped around this: it covers every
-Phase 1 for/break/continue/recursion program and the Phase 4 quant
-integration programs, not the two closure-capture tests, which the IR
-path cannot execute by construction.
+It makes top-level functions and recursion (`factorial`, `fib` call
+themselves by name) work identically to the tree-walking interpreter.
+There are no closures to support: the type checker rejects a nested
+function that reads its enclosing function's locals, on every backend
+alike, so a call by static name is all a call ever needs.
 
 Short-circuit `and`/`or` (`_lower_logical`) needs a `JumpIfFalse` plus
 one `UnaryOp("!", ...)` to emulate a `JumpIfTrue` this instruction set
 doesn't have, and a `Move` (see instructions.py's docstring) to converge
 the left/right branches into one result register.
 
-**Phase 6 retrofit: `register_types`.** LLVM codegen needs to know each
-register's static type (to pick `fadd` vs `add`, decide native-scalar vs
-boxed-pointer representation, ...), but this IR's registers don't carry
-type information on their own. Rather than a separate re-inference pass
-over the IR, this lowering records `register_types[dest] = expr.
-inferred_type` as it goes -- the type checker (Phase 3) already
-annotated every expression node with its resolved type, so this is
-free to capture at the exact point each register is created. Function
-signatures (param/return types) are re-resolved from each `FuncDecl`'s
-`TypeAnnotation`s the same way the checker does (`resolve_base_type`/
-`resolve_generic_type`) -- safe to assume present, since Phase 3
-requires explicit types on every function. This is additive: `functions`
-(program + param *names*) is unchanged from Phase 5, so the IR
-interpreter and its existing tests don't need to know any of this
-exists. New info lives in `FunctionInfo` (param/return *types* and the
-function body's own `register_types`), collected in `function_info`,
-alongside `functions` rather than folded into it.
+**`register_types`: every register's static type.** LLVM codegen needs
+each register's type (to pick `fadd` vs `add`, to decide native-scalar
+vs boxed-handle representation, ...), but this IR's registers don't
+carry types on their own. Rather than a separate re-inference pass over
+the IR, this lowering records `register_types[dest] = expr.
+inferred_type` as it goes -- the type checker already annotated every
+expression node, so the type is free to capture at the exact point each
+register is created. Function signatures (param/return types) are
+re-resolved from each `FuncDecl`'s `TypeAnnotation`s the same way the
+checker does (`resolve_base_type`/`resolve_generic_type`) -- safe, since
+the checker requires explicit types on every function. The IR
+interpreter needs none of this, so it lives in `FunctionInfo` (param and
+return types, and the body's own `register_types`), collected in
+`function_info` beside `functions` (program + param names) rather than
+folded into it.
 
 `for`'s `continue` target is deliberately NOT the same label as
 `while`'s: a `for` loop's `continue` must still run the increment before
-re-checking the condition (matching the Phase 1 interpreter's
-`_exec_for`), so it jumps to a dedicated `increment_label`, not straight
+re-checking the condition (as the tree-walking interpreter does), so it
+jumps to a dedicated `increment_label`, not straight
 back to the condition-check `loop_label` the way `while`'s `continue`
 does. Getting this wrong silently breaks `for` (either skipping the
 increment forever, or -- if aliased wrong -- skipping the condition
@@ -150,10 +141,9 @@ _FALLIBLE = (LoadVar, BinOp, UnaryOp, MemberGet, Call)
 
 @dataclass
 class FunctionInfo:
-    """LLVM-lowering-specific metadata (Phase 6) -- collected *alongside*
-    `IRLowering.functions` (program + param names, unchanged from Phase
-    5), not folded into it, so the IR interpreter and its existing
-    tests don't need to know any of this exists."""
+    """A function's types, for the LLVM backend -- kept *alongside*
+    `IRLowering.functions` (program + param names), not folded into
+    it, because the IR interpreter doesn't need them."""
 
     param_types: list[Type]
     return_type: Type
@@ -401,11 +391,9 @@ class IRLowering:
         body_program = IRProgram(instructions=sub_lowering.instructions, is_function=True)
         self.functions[stmt.name] = (body_program, [param.name for param in stmt.params])
 
-        # Phase 3 requires explicit types on every function, so this
-        # normally succeeds -- but lowering also runs directly on
-        # untyped programs in tests (Phase 5's cross-validation suite
-        # deliberately skips type-checking, reusing the tree-walker's
-        # original untyped test programs). Rather than crash on those,
+        # The type checker requires explicit types on every function,
+        # so this normally succeeds -- but some tests lower programs
+        # without type-checking them first. Rather than crash on those,
         # just skip building FunctionInfo: the IR interpreter doesn't
         # need it (only `functions`, unaffected above), and nothing
         # untyped will be run through the LLVM path anyway, since that
@@ -425,30 +413,18 @@ class IRLowering:
         bar-by-bar iteration stays entirely outside the IR's own
         control-flow machinery; it's invoked, not inlined.
 
-        **Rewritten in Phase 7.** The Phase 5.2 version was written
-        while these constructs were always-raising stubs, and was
-        structurally unable to express them: it emitted a nameless
-        `__strategy_declare`, lowered each `when` body *inline and
-        unconditionally* (so the body ran in sequence rather than when
-        its signal fired), and passed raw strategy/symbol *strings* in
-        an argument list the interpreter reads as register names.
-        Nothing caught it because the constructs never executed.
-
-        Each `when` body now becomes its own zero-argument IRProgram --
-        the same mechanism `FuncDecl` already uses -- so the engine can
-        invoke it per-bar. Body programs are named `__when_body_<n>` and
+        A `when` body can't be lowered inline: it must run only on the
+        bars its signal fires on, which only the engine knows. So each
+        body becomes its own zero-argument IRProgram -- the same
+        mechanism `FuncDecl` uses -- and the engine invokes it per
+        bar. Body programs are named `__when_body_<n>` and
         registered in `functions`/`function_info` alongside ordinary
         user functions, which is what lets the LLVM backend declare and
         compile them with no special-casing.
 
-        **Documented semantic difference from the tree-walking
-        interpreter**: clause operands (`fast`, `slow`) are evaluated
-        here, at the *declaration* site, whereas the tree walker defers
-        them to the `backtest` statement (allie.runtime.values.
-        StrategyValue captures its environment by reference). For any
-        program that computes its indicators before declaring the
-        strategy -- which is every realistic one, and every one in the
-        test suite -- both give identical results.
+        Clause conditions are evaluated here, at the declaration, as
+        on every backend: reassigning `fast` afterwards doesn't change
+        a strategy already declared.
         """
         name_reg = self._const(stmt.name)
         self._emit(Call(dest=None, fn_name=STRATEGY_DECLARE_FN, args=[name_reg]))
@@ -534,8 +510,8 @@ class IRLowering:
             dest = self._lower_expr_impl(expr)
         finally:
             self._span = outer
-        # Phase 6 retrofit: record every register's static type from the
-        # type checker's own annotation (see this module's docstring).
+        # Record every register's static type from the type checker's
+        # own annotation (see this module's docstring).
         # `inferred_type` is only None if type-checking never ran --
         # lowering isn't meaningful in that case anyway.
         if expr.inferred_type is not None:
@@ -659,9 +635,8 @@ def lower_program(
     dict[str, FunctionInfo],
 ]:
     """Convenience entry point: returns (main_program, functions,
-    register_types, function_info). The last two are additive (Phase 6)
-    -- callers that only need the first two (the IR interpreter, its
-    existing tests) can keep unpacking just those and ignore the rest.
+    register_types, function_info). The IR interpreter needs only the
+    first two; the LLVM backend needs all four.
 
     Lowered IR never contains unreachable code -- the statements after a
     `break`/`continue`/`return`, or after an `if` whose branches both

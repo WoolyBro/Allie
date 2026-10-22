@@ -1,7 +1,5 @@
-"""Phase 0 smoke test: proves the package layout imports cleanly and the
-CLI entry point is wired up. Real lexer/parser tests replace this once
-Phase 2 lands (the evaluator itself already has its own tests -- see
-test_phase1_eval.py)."""
+"""Smoke test: the package layout imports cleanly and the CLI entry
+point is wired up -- the first thing to break if packaging does."""
 
 from __future__ import annotations
 

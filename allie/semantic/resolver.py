@@ -1,8 +1,7 @@
-"""Resolver -- designed here to satisfy Phase 3's typechecker spec, which
-repeatedly assumes "Phase 2's resolver already tracks loop_depth/
-inside_strategy/inside_when" even though no resolver spec was ever
-provided. Runs after parsing (allie.parser), before type-checking
-(allie.typechecker.checker).
+"""Resolver: scopes and placement. Runs after parsing (allie.parser),
+before type-checking (allie.typechecker.checker), and tracks
+loop_depth/inside_strategy/inside_when so that a jump or a `when` is
+only accepted where it can mean something.
 
 Catches structural errors syntax alone can't: `break`/`continue` outside
 a loop, `return` outside a function, a `backtest` referring to an
@@ -13,12 +12,12 @@ TypeEnvironment (allie.typechecker.checker), which maps names to types;
 Scope only tracks that a name exists. Don't conflate the two.
 
 Design choice: a bare Identifier used as a Call's callee is NOT checked
-for existence here. Builtins/stdlib functions (SMA, print, ...) aren't
-registered in any scope yet -- there's no builtin registry in this repo
--- so treating every call target as "must be locally declared" would
-misfire on every builtin call. The type checker is responsible for
-validating a call target actually resolves to a FunctionType; this
-resolver only validates plain value references and assignments.
+for existence here. Builtins (SMA, print, ...) live in the stdlib
+registry, not in any scope this pass keeps, so treating every call
+target as "must be locally declared" would misfire on every builtin
+call. The type checker validates that a call target resolves to a
+FunctionType; this resolver only validates plain value references and
+assignments.
 """
 
 from __future__ import annotations

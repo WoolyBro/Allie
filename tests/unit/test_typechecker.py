@@ -1,5 +1,5 @@
-"""Tests for allie/typechecker/ (Phase 3). One test per rule, both a
-passing and a failing case where the spec asked for it."""
+"""Tests for allie/typechecker/. One test per rule, with both a passing
+and a failing case where the rule has two sides."""
 
 from __future__ import annotations
 
@@ -61,8 +61,8 @@ def test_binary_arithmetic_int_float_passes_with_float_result() -> None:
 
 
 def test_string_concatenation_type_checks() -> None:
-    # Found while wiring up Phase 6: '+' on two Strings works fine
-    # dynamically in both interpreters but was rejected here until now.
+    # '+' on two Strings concatenates on every backend, so the checker
+    # must accept it.
     assert _check_expr_type('"a" + "b"') == "String"
 
 

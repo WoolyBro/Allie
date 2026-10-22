@@ -1,11 +1,6 @@
 // The smallest complete Allie program that touches both halves of the
-// language. Start here, then read examples/blended.qs.
-//
-// Renamed from hello_world.ql in Phase 9. The original was written in
-// Phase 0 as a target to build toward and never actually ran -- it
-// called `load_csv`/`sma`, which are named `load`/`SMA` in the stdlib
-// registry, and backtested a symbol it never loaded. Fixed rather than
-// left as a broken file named "hello world" in the examples directory.
+// language: a string, and a strategy backtested on a price file. Start
+// here, then read examples/blended.qs.
 
 let greeting: String = "hello, " + "allie";
 print(greeting);

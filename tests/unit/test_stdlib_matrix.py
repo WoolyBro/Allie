@@ -1,4 +1,4 @@
-"""Tests for allie/stdlib/matrix_ops.py -- Phase 4.3. Known matrices with
+"""Tests for allie/stdlib/matrix_ops.py. Known matrices with
 hand-computed inverse/determinant."""
 
 from __future__ import annotations

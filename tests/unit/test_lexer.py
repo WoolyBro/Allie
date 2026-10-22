@@ -679,8 +679,8 @@ def test_keywords_doc_matches_generated_output() -> None:
 
 
 def test_language_reference_keyword_block_matches_generated_output() -> None:
-    """The reference doc's keyword table is generated from the same dict
-    (Phase 9's checklist: generated, not hand-typed). Two documents
+    """The reference doc's keyword table is generated from the same dict,
+    not hand-typed. Two documents
     rendering the same source of truth can still drift if only one is
     regenerated -- this pins both."""
     import sys

@@ -1,4 +1,4 @@
-"""Tests for allie/stdlib/series_ops.py -- Phase 4.3. Hand-computed
+"""Tests for allie/stdlib/series_ops.py. Hand-computed
 expected values, cross-checked against pandas where noted."""
 
 from __future__ import annotations

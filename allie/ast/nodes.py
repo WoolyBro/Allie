@@ -1,12 +1,9 @@
-"""AST node definitions -- Phase 2.3, designed here since no separate AST
-spec was provided (Phase 3's typechecker spec assumes one exists).
+"""AST node definitions.
 
-Nodes are plain dataclasses, not the hand-built tuples Phase 1's evaluator
-consumed. That's a deliberate departure from the earlier "the parser
-targets this exact tuple shape" plan: Phase 3 needs a mutable
-`inferred_type` field on every expression node, and tuples can't hold
-that. allie.runtime.interpreter has NOT been adapted to walk these nodes
-yet -- see ROADMAP.md for that follow-up.
+Nodes are plain dataclasses. Every expression has a mutable
+`inferred_type` field: the type checker fills it in, and every later
+pass -- the look-ahead analysis, IR lowering, the tree-walking
+interpreter -- reads it rather than re-deriving types.
 
 Every node carries a SourceSpan for diagnostics. `Expr`/`Stmt` are bare
 marker base classes (not dataclasses themselves) so subclasses can freely

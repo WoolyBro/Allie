@@ -8,10 +8,9 @@ Quant keywords (strategy/when/crosses_above/crosses_below/backtest/on/
 from/to/with) are canonical-only in v1 -- the mechanism supports slang
 aliases for them uniformly later without touching the lexer.
 
-`and`/`or` are added here beyond the originally pasted table: TokenType
-defines AND/OR, and the grammar's logic_and/logic_or productions rely on
-them as keyword tokens, not identifiers -- canonical-only for now, same
-as the quant keywords, since no slang spelling was specified for them.
+`and`/`or` are keywords too -- the grammar's logic_and/logic_or
+productions need them as keyword tokens, not identifiers -- and are
+canonical-only, like the quant keywords.
 
 docs/keywords.md is generated from this dict (see
 scripts/generate_keywords_doc.py) -- tests/unit/test_lexer.py fails if

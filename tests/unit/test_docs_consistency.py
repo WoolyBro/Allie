@@ -1,10 +1,10 @@
 """Cross-cutting checklist: docs that describe the implementation are
 checked against the implementation.
 
-Phase 9's checklist asks that every grammar rule land in
-`docs/grammar.md` alongside the code implementing it. Prose can't be
-enforced, but the type list can be -- and it had already drifted:
-`PriceSeries` (Phase 4) resolved fine but was missing from the grammar,
+Every grammar rule belongs in `docs/grammar.md` alongside the code
+implementing it. Prose can't be enforced, but the type list can be --
+and it had drifted once: `PriceSeries` resolved fine but was missing
+from the grammar,
 while `Series`/`Matrix`/`Vector` were listed as if their type argument
 were optional, which the type checker rejects.
 """

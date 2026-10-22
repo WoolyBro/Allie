@@ -1,4 +1,4 @@
-"""Lexical scoping, shared by the Phase 1 evaluator and every phase after it.
+"""Lexical scoping for the tree-walking interpreter.
 
 `assign()` walks the parent chain looking for an EXISTING binding and
 mutates it in place -- it never creates a new global as a side effect of a

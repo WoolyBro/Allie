@@ -1,17 +1,16 @@
 """End-to-end integration tests: real .ql-shaped source through the full
 lex -> parse -> resolve -> type-check -> run pipeline, exercising the
-stdlib (Phase 4.3) against the synthetic fixture in tests/fixtures/.
+stdlib against the synthetic fixture in tests/fixtures/.
 
-The first test matches Phase 4.3's reference-doc example
-(`load` -> `SMA` -> `print`) as closely as the actual grammar allows --
-the reference pseudocode omitted semicolons, which docs/grammar.md's
+The first test is the smallest quant program there is (`load` ->
+`SMA` -> `print`), with the semicolons docs/grammar.md's
 `letStmt`/`exprStmt` require; that's a syntax difference from matching
 this project's real, already-committed grammar, not a semantic one.
 
 The second combines this with a `for` loop (computing SMA at several
 window sizes and printing each), the same cross-family concern a later
 `blended.qs`-style test would check, in miniature, now -- catching
-anything Phase 2's control flow and Phase 4's quant types don't compose
+anything the control flow and the quant types don't compose
 cleanly on yet.
 """
 

@@ -1,4 +1,4 @@
-"""Tests for allie/runtime/environment.py (Phase 1.2)."""
+"""Tests for allie/runtime/environment.py."""
 
 from __future__ import annotations
 

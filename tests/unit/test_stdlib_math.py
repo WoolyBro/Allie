@@ -1,4 +1,4 @@
-"""Tests for allie/stdlib/math_fns.py -- Phase 4.3. Hand-computed
+"""Tests for allie/stdlib/math_fns.py. Hand-computed
 expected values, cross-checked against pandas where noted (pandas is a
 test-only dependency here, not a runtime one)."""
 

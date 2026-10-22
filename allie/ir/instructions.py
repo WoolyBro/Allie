@@ -117,8 +117,8 @@ class MemberGet(IRInstr):
 
 @dataclass
 class Move(IRInstr):
-    """Not in the original Phase 5.1 list -- see this module's docstring
-    for why short-circuit Logical lowering needs it."""
+    """`dest = src`, for short-circuit `and`/`or` -- see this module's
+    docstring for why they need it."""
 
     dest: str
     src: str

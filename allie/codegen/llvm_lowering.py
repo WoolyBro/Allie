@@ -1,6 +1,6 @@
-"""Custom IR -> LLVM IR lowering -- Phase 6.3.
+"""Custom IR -> LLVM IR lowering.
 
-## Type mapping (Phase 6.2)
+## Type mapping
 
 | Allie type | LLVM type |
 |---|---|
@@ -10,35 +10,31 @@
 | `Void` | `void` |
 | everything else (`String`, quant types, `Any`, `FunctionType`) | `i64` -- opaque boxed handle |
 
-**Deviation from the literal spec, documented**: `String -> i8*` (a
-pointer to a global constant) was the literal ask, scoped to "no dynamic
-string ops needed yet". Allie's `+` supports runtime string
-concatenation (already proven in the tree-walker/IR-interpreter tests),
-so a string's value isn't always a compile-time constant a fixed global
-could hold. Every non-native-scalar type uses the SAME boxed-`i64`-handle
-scheme uniformly (see `allie.codegen.runtime_bridge`) instead of a
-special case just for strings -- one mechanism, not two.
+**Strings are handles too**, not `i8*` pointers to global constants:
+`+` concatenates strings at run time, so a string isn't always a
+compile-time constant a fixed global could hold. Every non-native-scalar
+type uses the same boxed-`i64`-handle scheme (see
+`allie.codegen.runtime_bridge`) -- one mechanism, not a special case
+per type.
 
-**Series/Matrix/Vector native codegen is explicitly out of scope for v1**
-(also per the spec): calls to `SMA`, `mean`, etc. are lowered as external
-calls back into the Python/numpy runtime via `runtime_bridge.
-call_builtin_bridge`, never reimplemented in LLVM IR.
+**Series and Matrix work isn't compiled**: calls to `SMA`, `mean`, etc.
+are lowered as external calls back into the Python/numpy runtime via
+`runtime_bridge.call_builtin_bridge`, never reimplemented in LLVM IR.
+numpy already runs them as compiled loops (docs/how-it-works.md §3.3).
 
-## Self-check confirming the Phase 5.2 desugar (Phase 6.3's own ask)
+## No `for`-specific code
 
-Traced a `for` loop (`sum_to_n`, see test_llvm_lowering.py) through this
-lowering by hand: zero `for`-specific code exists here. `Label`/`Jump`/
-`JumpIfFalse` become basic blocks and `br`/`cbranch` uniformly for
-`if`/`while`/`for` alike, exactly because Phase 5.2 desugared `for` onto
-`while`'s shape already. If a `for`-specific branch had crept in here,
-that would mean the Phase 5.2 desugar wasn't applied consistently --
-the fix would belong there, not here. None did.
+There is none here. `Label`/`Jump`/`JumpIfFalse` become basic blocks and
+`br`/`cbranch` uniformly for `if`/`while`/`for` alike, because IR
+lowering already desugars `for` into `while`'s shape. A `for`-specific
+branch here would mean that desugaring hadn't been applied consistently
+-- and the fix would belong there, not here.
 
 ## Native vs. bridged dispatch
 
 A `BinOp`/`UnaryOp` compiles to a direct LLVM instruction (`fadd`/`add`/
 `icmp_signed`/`fcmp_ordered`/...) only when every operand's recorded
-type (`allie.ir.lowering`'s Phase 6 `register_types` retrofit) is a
+type (`allie.ir.lowering`'s `register_types`) is a
 native scalar (`Int`/`Float`/`Bool`); otherwise it's bridged through
 `runtime_bridge.binop_bridge`/`unaryop_bridge`, which call the exact
 same `_apply_binop`/`_apply_unary` the IR interpreter uses -- no third
@@ -251,16 +247,16 @@ class LLVMLowering:
     def _finalize_function(self, func: ir.Function, return_type: Type, name: str) -> None:
         """LLVM requires every basic block to end in a terminator, even
         one nothing branches to: a `for`/`if` whose every live path
-        already returned still leaves the `end_label` block our own
-        lowering (Phase 5.2) always emits sitting empty and un-branched-
-        to. Any block never recorded in `_reached_blocks` is exactly
-        that -- genuinely unreachable, not a missing `return` -- so it
+        already returned still leaves the `end_label` block IR
+        lowering always emits sitting empty and un-branched-to. Any
+        block never recorded in `_reached_blocks` is exactly that --
+        genuinely unreachable, not a missing `return` -- so it
         gets an explicit `unreachable` terminator. The one block that
         *is* live and still lacks a terminator is the function falling
         off its natural end: `ret_void` for a Void function (the normal,
         intentional case of never writing an explicit trailing
-        `return;`), or an error for anything else -- which Phase 3's
-        "does every path return" check should already have caught, so
+        `return;`), or an error for anything else -- which the type
+        checker's "does every path return" check should already have caught, so
         reaching it here would mean these two checks disagree, not that
         the user's program is actually wrong.
         """
@@ -332,9 +328,9 @@ class LLVMLowering:
                 continue
             if self.builder.block.is_terminated:
                 # Unreachable: e.g. both branches of an `if` end in
-                # `return`, so the unconditional `Jump(end_label)` our
-                # own lowering (Phase 5.2) always emits after the
-                # then-branch never actually runs. LLVM requires a
+                # `return`, so the unconditional `Jump(end_label)` IR
+                # lowering always emits after the then-branch never
+                # actually runs. LLVM requires a
                 # terminator to be a basic block's *last* instruction,
                 # so nothing here can be emitted into this block -- skip
                 # straight to the next Label, which starts a fresh block.
@@ -393,7 +389,7 @@ class LLVMLowering:
 
     def _lower_move(self, instr: Move) -> None:
         """`Move` is only ever emitted by short-circuit `and`/`or`
-        lowering (Phase 5.2), where TWO Moves write the same destination
+        lowering, where TWO Moves write the same destination
         register from different branches -- one before the
         short-circuit `JumpIfFalse`, one after evaluating the right
         operand. Aliasing `reg_values[dest] = reg_values[src]` breaks

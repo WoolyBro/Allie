@@ -24,7 +24,7 @@ interpreter (allie/repl.py). FILE may be `-` for standard input.
 
 ## Two entry points, deliberately
 
-`python main.py FILE` (Phase 6.4) is `allie run --backend llvm FILE`;
+`python main.py FILE` is `allie run --backend llvm FILE`;
 both share `run_pipeline` below.
 """
 

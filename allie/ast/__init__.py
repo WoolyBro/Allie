@@ -1,4 +1,5 @@
-"""Phase 2.3: AST node definitions. Every node carries a allie.errors.SourceSpan."""
+"""The syntax tree: node definitions (nodes.py) and the `--debug-ast`
+printer (printer.py). Every node carries an allie.errors.SourceSpan."""
 
 from allie.ast.nodes import (
     ArrayLiteral,
